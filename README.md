@@ -47,6 +47,7 @@
 │   ├── db/             # DB 관리 코드 (SQLModel 스키마 및 Manager)
 │   └── simulation/     # 음향 시머니레이션 (RIR 생성, 믹싱 로직)
 │
+├── mlruns/             # 📊 MLflow 실험 데이터 (로컬 파일시스템)
 ├── scripts/            # 📜 유틸리티 스크립트
 │   ├── manage_db.py         # 🗄️ 통합 DB 관리 CLI
 │   ├── generate_rir_bank.py  # 🏟️ RIR 대량 시뮬레이션 생성
@@ -93,9 +94,9 @@ uv run python main.py fit --config configs/baseline.yaml
 ```
 
 ### 4. 실험 분석 (Tracking)
-로컬에 구축된 MLflow 서버를 통해 실험 결과를 실시간으로 모니터링합니다.
+로컬 파일시스템에 기록된 실험 결과를 MLflow UI를 통해 확인합니다.
 ```bash
-uv run mlflow server --host 0.0.0.0 --port 5000
+uv run mlflow ui
 ```
 
 ---
