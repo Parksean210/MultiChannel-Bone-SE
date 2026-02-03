@@ -41,7 +41,7 @@
 │   └── metadata.db     # SQLite 데이터베이스 (인덱싱된 메타데이터)
 │
 ├── src/                # 💻 소스 코드
-│   ├── models/         # [Pure PyTorch] 모델 아키텍처 (CRN, Demucs 등)
+│   ├── models/         # [Pure PyTorch] 모델 아키텍처 (BaseSEModel 등)
 │   ├── modules/        # [Lightning] 학습 로직 및 시스템
 │   ├── data/           # [Lightning] 데이터 파이프라인 (Dataset, DataLoader)
 │   ├── db/             # DB 관리 코드 (SQLModel 스키마 및 Manager)
@@ -51,12 +51,17 @@
 ├── scripts/            # 📜 유틸리티 스크립트
 │   ├── manage_db.py         # 🗄️ 통합 DB 관리 CLI
 │   ├── generate_rir_bank.py  # 🏟️ RIR 대량 시뮬레이션 생성
-│   └── visualize_rirs.py    # 🎨 RIR 시뮬레이션 결과 시각화
+│   ├── visualize_rirs.py    # 🎨 RIR 시뮬레이션 결과 시각화
+│   ├── utils/              
+│   │   └── convert_pcm_to_wav.py # 🔄 PCM -> WAV 고속 변환기
+│   └── tests/
+│       └── test_base_model.py    # 🧪 모델 아키텍처 검증 (Perfect Reconstruction)
 │
 ├── docs/               # 📚 상세 문서 (가이드라인)
 │   ├── Database_Management_Guide.md  # DB 상세 관리 및 SQLModel 사용법
 │   ├── RIR_Simulation_Guide.md      # RIR 생성 및 메타데이터 구조 가이드
-│   └── ...
+│   ├── Data_Synthesis_Guide.md      # 온더플라이 데이터 합성 가이드
+│   └── Base_Model_Architecture_Guide.md # 모델 아키텍처 설계 및 구현 가이드
 ├── main.py             # 🚀 실행 엔트리포인트 (LightningCLI)
 └── pyproject.toml      # 📦 의존성 명세서 (uv)
 ```
@@ -87,10 +92,11 @@ uv run python scripts/generate_rir_bank.py --count 1000
 uv run python scripts/visualize_rirs.py data/rirs/rir_00000.pkl
 ```
 
-### 3. 모델 학습 (Training)
-`main.py` 단 하나로 학습을 실행합니다. 설정은 `configs/` 폴더 안의 YAML 파일로 제어합니다.
+### 3. 모델 학습 (Training - In Progress)
+`main.py`를 통해 학습을 실행합니다 (현재 Lightning Module 구현 진행 중).
 ```bash
-uv run python main.py fit --config configs/baseline.yaml
+# (예정/WIP) 
+# uv run python main.py fit --config configs/baseline.yaml
 ```
 
 ### 4. 실험 분석 (Tracking)
