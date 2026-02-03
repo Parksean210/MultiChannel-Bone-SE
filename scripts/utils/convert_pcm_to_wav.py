@@ -28,19 +28,27 @@ def convert_single_file(pcm_path, wav_path, sample_rate, channels, dtype, overwr
         return False, f"Error {pcm_path}: {e}"
 
 def normalize_path(path_str):
-    r"""
-    Converts Windows-style paths (D:\...) to WSL-style (/mnt/d/...) if needed.
+    """
+    Normalizes paths, handling Windows-style paths on both native Windows and WSL.
     """
     if not path_str:
         return None
     
-    # Handle D:\... or d:\...
-    if len(path_str) > 1 and path_str[1] == ":" and path_str[2] in ["\\", "/"]:
+    p = Path(path_str)
+    
+    # 1. If the path already exists as-is, use it (standard for native Windows or already-correct Linux paths)
+    if p.exists():
+        return p
+        
+    # 2. If we are on Linux (WSL) and get a Windows-style path (e.g., D:\...), try converting to /mnt/d/...
+    if os.name == 'posix' and len(path_str) > 1 and path_str[1] == ":" and path_str[2] in ["\\", "/"]:
         drive = path_str[0].lower()
         rest = path_str[3:].replace("\\", "/")
-        return Path(f"/mnt/{drive}/{rest}")
-    
-    return Path(path_str)
+        wsl_path = Path(f"/mnt/{drive}/{rest}")
+        if wsl_path.exists():
+            return wsl_path
+            
+    return p
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-threaded PCM to WAV Converter")
