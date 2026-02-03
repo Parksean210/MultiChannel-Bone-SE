@@ -1,0 +1,22 @@
+[project]
+name = "speech-enhancement"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "jsonargparse[signatures]>=4.27.7",
+    "lightning>=2.6.0",
+    "matplotlib>=3.10.8",
+    "mlflow>=3.8.1",
+    "numpy>=2.2.6",
+    "pyroomacoustics>=0.9.0",
+    "python-dotenv>=1.2.1",
+    "soundfile>=0.13.1",
+    "sqlmodel>=0.0.31",
+    "torch>=2.10.0",
+    "torchaudio>=2.10.0",
+    "torchcodec>=0.10.0",
+    "torchvision>=0.25.0",
+    "tqdm>=4.67.1",
+]

@@ -1,0 +1,71 @@
+# ==========================
+# 1. 보안 & 환경설정
+# ==========================
+.env
+.venv/
+venv/
+env/
+
+# ==========================
+# 2. 데이터 (Data) - 용량이 큼
+# ==========================
+data/**
+!data/**/
+!data/**/.gitkeep
+
+# 대용량 데이터베이스 파일
+*.db
+*.sqlite
+
+# 혹시 모를 임시 데이터 파일들
+*.wav
+*.mp3
+*.flac
+*.pkl
+*.npy
+*.npz
+*.h5
+
+# ==========================
+# 3. 개발 도구 및 환경
+# ==========================
+.ipynb_checkpoints/
+.python-version
+.uv/
+
+# ==========================
+# 4. 학습 로그 & 모델 (MLflow/Lightning)
+# ==========================
+mlruns/             # MLflow 로컬 저장소
+logs/               # Lightning 로그 및 체크포인트
+lightning_logs/     # Lightning 기본 로그 폴더
+
+# 모델 가중치 파일 (수백 MB ~ 수 GB)
+*.ckpt
+*.pth
+*.pt
+*.onnx
+
+# ==========================
+# 5. Python 기본
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.coverage
+.ipynb_checkpoints/
+build/
+dist/
+wheels/
+*.egg-info/
+
+# ==========================
+# 6. IDE & OS 설정 (지저분함)
+# ==========================
+.vscode/            # VS Code 설정 (팀 공유 안할거면 무시)
+.idea/              # JetBrains(PyCharm) 설정
+.DS_Store           # Mac 메타데이터
+Thumbs.db           # Windows 메타데이터
