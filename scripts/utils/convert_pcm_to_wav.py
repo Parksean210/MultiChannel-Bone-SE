@@ -69,8 +69,18 @@ def main():
         sys.exit(1)
 
     print(f"Searching for PCM files in: {root_path}")
-    pcm_files = list(root_path.glob("**/*.pcm"))
-    print(f"Found {len(pcm_files)} PCM files.")
+    pcm_files = []
+    # os.walk is generally faster for massive directory trees
+    for root, dirs, files in os.walk(root_path):
+        for file in files:
+            if file.lower().endswith(".pcm"):
+                pcm_files.append(Path(root) / file)
+        
+        # Give feedback every 100 directories to show it's alive
+        if len(pcm_files) % 1000 == 0 and len(pcm_files) > 0:
+            print(f"  ... Scanning: Found {len(pcm_files)} files so far...", end='\r')
+
+    print(f"\nFound {len(pcm_files)} PCM files.")
 
     if not pcm_files:
         print("No PCM files found. Exiting.")
