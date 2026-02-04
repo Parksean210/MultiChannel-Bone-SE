@@ -6,23 +6,23 @@ import torch
 import argparse
 import subprocess
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 def get_audio_files(root_dir, extension):
     return glob.glob(os.path.join(root_dir, f"**/*.{extension}"), recursive=True)
 
 def pcm_to_wav_worker(task):
-    path, delete = task
+    path, sr, delete = task
     try:
-        # Assuming int16 PCM (standard for KsponSpeech)
+        # Assuming int16 PCM
         with open(path, 'rb') as f:
             pcm_data = np.frombuffer(f.read(), dtype=np.int16)
         
         waveform = torch.from_numpy(pcm_data).float().unsqueeze(0) / 32768.0
         output_path = os.path.splitext(path)[0] + ".wav"
         
-        torchaudio.save(output_path, waveform, 16000) # Kspon is 16k
+        torchaudio.save(output_path, waveform, sr)
         
         if delete:
             os.remove(path)
@@ -92,6 +92,7 @@ def main():
     # PCM to WAV
     p2w = subparsers.add_parser("pcm2wav", parents=[parent_parser])
     p2w.add_argument("dir", help="Root directory")
+    p2w.add_argument("--sr", type=int, default=16000, help="Sample rate of the PCM data (default: 16000)")
     p2w.add_argument("--delete", action="store_true", help="Delete original pcm files")
     
     # WAV to NPY
@@ -112,23 +113,29 @@ def main():
     
     if args.command == "pcm2wav":
         files = get_audio_files(args.dir, "pcm")
-        tasks = [(f, args.delete) for f in files]
-        print(f"Converting {len(files)} PCM files to WAV using {args.workers} workers...")
+        tasks = [(f, args.sr, args.delete) for f in files]
+        print(f"Converting {len(files)} PCM files to WAV ({args.sr}Hz) using {args.workers} workers...")
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
-            list(tqdm(ex.map(pcm_to_wav_worker, tasks), total=len(tasks)))
+            futures = [ex.submit(pcm_to_wav_worker, t) for t in tasks]
+            for _ in tqdm(as_completed(futures), total=len(futures)):
+                pass
             
     elif args.command == "wav2npy":
         files = get_audio_files(args.dir, "wav")
         print(f"Converting {len(files)} WAV files to NPY (deleting originals) using {args.workers} workers...")
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
-            list(tqdm(ex.map(wav_to_npy_worker, files), total=len(files)))
+            futures = [ex.submit(wav_to_npy_worker, f) for f in files]
+            for _ in tqdm(as_completed(futures), total=len(futures)):
+                pass
             
     elif args.command == "resample":
         files = get_audio_files(args.dir, "wav")
         tasks = [(f, args.sr, args.delete) for f in files]
         print(f"Resampling {len(files)} WAV files to {args.sr}Hz using {args.workers} workers...")
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
-            list(tqdm(ex.map(resample_worker, tasks), total=len(tasks)))
+            futures = [ex.submit(resample_worker, t) for t in tasks]
+            for _ in tqdm(as_completed(futures), total=len(futures)):
+                pass
             
     elif args.command == "clean_txt":
         files = get_audio_files(args.dir, "txt")

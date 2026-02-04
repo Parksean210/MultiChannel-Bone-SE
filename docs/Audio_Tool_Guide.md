@@ -19,11 +19,11 @@
 ### 1. PCM 파일을 WAV로 변환
 KsponSpeech와 같이 `.pcm` 확장자로 된 파일을 `.wav`로 일괄 변환합니다.
 ```bash
-# 원본 유지하며 변환
+# 기본값(16kHz)으로 변환
 uv run python scripts/audio_tool.py pcm2wav data/raw/speech
 
-# 원본(.pcm) 삭제하며 변환 (용량 절약)
-uv run python scripts/audio_tool.py pcm2wav data/raw/speech --delete
+# 특정 샘플 레이트 명시 및 원본(.pcm) 삭제하며 변환 (용량 절약)
+uv run python scripts/audio_tool.py pcm2wav data/raw/speech --sr 16000 --delete
 ```
 
 ### 2. WAV 파일을 NPY로 변환 (학습 가속화)
