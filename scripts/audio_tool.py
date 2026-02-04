@@ -1,8 +1,7 @@
 import os
 import glob
 import numpy as np
-import torchaudio
-import torch
+import soundfile as sf
 import argparse
 import subprocess
 from tqdm import tqdm
@@ -19,10 +18,11 @@ def pcm_to_wav_worker(task):
         with open(path, 'rb') as f:
             pcm_data = np.frombuffer(f.read(), dtype=np.int16)
         
-        waveform = torch.from_numpy(pcm_data).float().unsqueeze(0) / 32768.0
+        # soundfile scale (normalize to [-1.0, 1.0])
+        waveform = pcm_data.astype(np.float32) / 32768.0
         output_path = os.path.splitext(path)[0] + ".wav"
         
-        torchaudio.save(output_path, waveform, sr)
+        sf.write(output_path, waveform, sr)
         
         if delete:
             os.remove(path)
@@ -34,13 +34,14 @@ def pcm_to_wav_worker(task):
 def wav_to_npy_worker(task):
     path, delete = task
     try:
-        waveform, sr = torchaudio.load(path)
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0)
-        else:
-            waveform = waveform.squeeze(0)
+        # soundfile.read returns (Samples, Channels)
+        waveform, sr = sf.read(path)
+        
+        # Ensure mono and flatten
+        if len(waveform.shape) > 1:
+            waveform = np.mean(waveform, axis=1)
             
-        waveform_int16 = (waveform.clamp(-1, 1) * 32767).numpy().astype(np.int16)
+        waveform_int16 = (np.clip(waveform, -1.0, 1.0) * 32767).astype(np.int16)
         output_path = os.path.splitext(path)[0] + ".npy"
         np.save(output_path, waveform_int16)
         
@@ -56,10 +57,10 @@ def npy_to_wav_worker(task):
     try:
         data = np.load(path)
         # Convert int16 back to float32
-        waveform = torch.from_numpy(data.astype(np.float32)).unsqueeze(0) / 32767.0
+        waveform = data.astype(np.float32) / 32767.0
         output_path = os.path.splitext(path)[0] + ".wav"
         
-        torchaudio.save(output_path, waveform, sr)
+        sf.write(output_path, waveform, sr)
         
         if delete:
             os.remove(path)

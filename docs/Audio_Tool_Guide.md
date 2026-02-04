@@ -58,5 +58,6 @@ uv run python scripts/audio_tool.py resample data/raw/noise --sr 16000 --delete
 
 
 ## 주의사항
+- **의존성 최적화:** 본 도구는 GPU나 무거운 `torch` 라이브러리 없이도 실행 가능하도록 `soundfile`과 `numpy`만을 사용합니다.
 - **FFmpeg 기반:** `resample` 기능을 사용하려면 시스템에 `ffmpeg`가 설치되어 있어야 합니다.
 - **용량 관리:** `--delete` 옵션 사용 시 복구가 불가능하므로 주의하십시오.
