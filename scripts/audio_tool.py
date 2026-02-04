@@ -31,7 +31,8 @@ def pcm_to_wav_worker(task):
         print(f"Error converting PCM {path}: {e}")
         return False
 
-def wav_to_npy_worker(path):
+def wav_to_npy_worker(task):
+    path, delete = task
     try:
         waveform, sr = torchaudio.load(path)
         if waveform.shape[0] > 1:
@@ -42,8 +43,9 @@ def wav_to_npy_worker(path):
         waveform_int16 = (waveform.clamp(-1, 1) * 32767).numpy().astype(np.int16)
         output_path = os.path.splitext(path)[0] + ".npy"
         np.save(output_path, waveform_int16)
-        # Usually we delete wav after npy conversion in this project
-        os.remove(path)
+        
+        if delete:
+            os.remove(path)
         return True
     except Exception as e:
         print(f"Error converting to NPY {path}: {e}")
@@ -98,6 +100,7 @@ def main():
     # WAV to NPY
     w2n = subparsers.add_parser("wav2npy", parents=[parent_parser])
     w2n.add_argument("dir", help="Root directory")
+    w2n.add_argument("--delete", action="store_true", help="Delete original wav files after conversion")
     
     # Resample
     res = subparsers.add_parser("resample", parents=[parent_parser])
@@ -118,9 +121,10 @@ def main():
             
     elif args.command == "wav2npy":
         files = get_audio_files(args.dir, "wav")
-        print(f"Converting {len(files)} WAV files to NPY (deleting originals) using {args.workers} workers...")
+        tasks = [(f, args.delete) for f in files]
+        print(f"Converting {len(files)} WAV files to NPY (delete={args.delete}) using {args.workers} workers...")
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
-            futures = [ex.submit(wav_to_npy_worker, f) for f in files]
+            futures = [ex.submit(wav_to_npy_worker, t) for t in tasks]
             for _ in tqdm(as_completed(futures), total=len(futures)):
                 pass
             

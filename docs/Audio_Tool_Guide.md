@@ -27,9 +27,13 @@ uv run python scripts/audio_tool.py pcm2wav data/raw/speech --sr 16000 --delete
 ```
 
 ### 2. WAV 파일을 NPY로 변환 (학습 가속화)
-학습 시 CPU 부하를 줄이기 위해 `.npy` 포맷으로 변환합니다. 변환 후 원본 `.wav`는 삭제됩니다.
+학습 시 CPU 부하를 줄이기 위해 `.npy` 포맷으로 변환합니다. 변환 후 원본 `.wav`를 선택적으로 삭제할 수 있습니다.
 ```bash
+# 원본 유지하며 변환
 uv run python scripts/audio_tool.py wav2npy data/raw/speech
+
+# 변환 후 원본(.wav) 삭제 (기본 권장)
+uv run python scripts/audio_tool.py wav2npy data/raw/speech --delete
 ```
 
 ### 3. 오디오 리샘플링 (Turbo Mode)
