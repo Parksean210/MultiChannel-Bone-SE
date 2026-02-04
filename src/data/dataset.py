@@ -6,209 +6,196 @@ import numpy as np
 import pickle
 from pathlib import Path
 from sqlmodel import Session, select, func
-from scipy.signal import convolve, butter, sosfilt
+from scipy.signal import butter, sosfilt
+from typing import List, Optional
+import torchaudio.functional as F_audio
 import random
+from torchcodec.decoders import AudioDecoder
 
 from src.data.models import SpeechFile, NoiseFile, RIRFile
 from src.db.engine import create_db_engine
 
 class SpatialMixingDataset(Dataset):
-    def __init__(self, db_path, target_sr=16000, is_eval=False, snr_range=(-5, 20)):
+    def __init__(self, db_path, target_sr=16000, is_eval=False, snr_range=(-5, 20), chunk_size=48000): # Default 3 sec
         self.engine = create_db_engine(db_path)
         self.target_sr = target_sr
         self.is_eval = is_eval
         self.snr_range = snr_range
+        self.chunk_size = chunk_size
 
-        # Fetch all IDs once to avoid repeated queries
+        # Pre-load all paths to memory to avoid DB access in __getitem__ (Contention Fix)
         with Session(self.engine) as session:
-            self.speech_ids = session.exec(select(SpeechFile.id).where(SpeechFile.is_eval == is_eval)).all()
-            self.noise_ids = session.exec(select(NoiseFile.id)).all()
-            self.rir_ids = session.exec(select(RIRFile.id)).all()
+            # 1. Speech
+            stmt = select(SpeechFile.id, SpeechFile.path).where(SpeechFile.is_eval == is_eval)
+            self.speech_data = session.exec(stmt).all() # List of (id, path)
             
-        if not self.speech_ids:
+            # 2. Noise
+            stmt = select(NoiseFile.id, NoiseFile.path)
+            self.noise_data = session.exec(stmt).all() # List of (id, path)
+            
+            # 3. RIR
+            stmt = select(RIRFile.id, RIRFile.path)
+            self.rir_data = session.exec(stmt).all() # List of (id, path)
+            
+        if not self.speech_data:
             raise ValueError(f"No speech files found for {'eval' if is_eval else 'train'} in DB.")
 
+        # RIR Management (Scalable Cache)
+        self.max_sources_supported = 8
+        self.rir_cache = {} # path -> tensor_data
+        self.max_cache_size = 100 # Adjust based on RAM (e.g., 100-200 is safe)
+        
+    def _get_rir_tensor(self, rir_path):
+        """Scalable RIR Loader with soft-caching."""
+        if rir_path in self.rir_cache:
+            return self.rir_cache[rir_path]
+        
+        with open(rir_path, 'rb') as f:
+            data = pickle.load(f)
+        
+        num_mics = len(data['rirs'])
+        num_available_sources = len(data['rirs'][0])
+        rir_len = max(data['rirs'][m][s].shape[0] for m in range(num_mics) for s in range(num_available_sources))
+        
+        # Structure: (Mics, Max_Sources, RIR_Len)
+        tensor = torch.zeros((num_mics, self.max_sources_supported, rir_len), dtype=torch.float32)
+        for m in range(num_mics):
+            for s in range(min(num_available_sources, self.max_sources_supported)):
+                r = data['rirs'][m][s]
+                tensor[m, s, :r.shape[0]] = torch.from_numpy(r).float()
+        
+        rir_item = {
+            'tensor': tensor,
+            'meta': data['meta'],
+            'num_sources': num_available_sources,
+            'path': rir_path
+        }
+        
+        # Simple cache management: If too many, clear half (could be better LRU, but this is fast)
+        if len(self.rir_cache) >= self.max_cache_size:
+            # Pop a random item or just clear (RIR files are small enough that re-reading isn't fatal)
+            self.rir_cache.pop(next(iter(self.rir_cache)))
+            
+        self.rir_cache[rir_path] = rir_item
+        return rir_item
+
     def __len__(self):
-        return len(self.speech_ids)
+        return len(self.speech_data)
 
-    def _load_audio(self, path):
-        # Use soundfile instead of torchaudio to avoid FFmpeg dependencies
-        import soundfile as sf
-        waveform, sr = sf.read(path)
-        
-        # soundfile returns (Samples, Channels) by default
-        if len(waveform.shape) > 1:
-            waveform = waveform[:, 0] # Take first channel if stereo
-            
-        if sr != self.target_sr:
-            # Simple resampling using numpy/scipy if needed, 
-            # but assuming raw data is already 16kHz for now
-            pass
-            
-        return torch.from_numpy(waveform).float() # (Samples,)
-
-    def _get_noise_long_enough(self, target_samples, session):
-        """Fetches and concatenates random noises until the length is satisfied."""
-        combined_noise = []
-        current_samples = 0
-        
-        while current_samples < target_samples:
-            noise_id = random.choice(self.noise_ids)
-            noise_meta = session.get(NoiseFile, noise_id)
-            noise_wav = self._load_audio(noise_meta.path)
-            
-            combined_noise.append(noise_wav)
-            current_samples += noise_wav.shape[0]
-            
-        combined_noise = torch.cat(combined_noise, dim=0)
-        return combined_noise[:target_samples]
-
-    def _apply_rir(self, audio_np, rir_list, target_len=None):
-        """Applies multi-channel RIRs to a mono audio signal."""
-        # rir_list is a list of numpy arrays (channels)
-        channels = []
-        for rir_chan in rir_list:
-            # Full convolution
-            output = convolve(audio_np, rir_chan, mode='full')
-            channels.append(output)
-        
-        # Consistent length padding for channels
-        max_out_len = max(len(c) for c in channels)
-        padded_channels = []
-        for c in channels:
-            if len(c) < max_out_len:
-                c = np.pad(c, (0, max_out_len - len(c)))
-            padded_channels.append(c)
-            
-        result = np.stack(padded_channels, axis=0)
-        
-        # Truncate or pad to match the original input length (speech mono length)
-        if target_len is not None:
-            if result.shape[1] > target_len:
-                result = result[:, :target_len]
-            elif result.shape[1] < target_len:
-                result = np.pad(result, ((0, 0), (0, target_len - result.shape[1])))
+    def _load_audio(self, path, start_frame=0, num_frames=-1):
+        # 1. High-speed .npy + memmap loading
+        if str(path).endswith(".npy"):
+            try:
+                # mmap_mode='r' keeps the file on disk and reads into memory on-demand
+                data = np.load(path, mmap_mode='r')
                 
-        return result
+                if num_frames == -1:
+                    waveform = data[start_frame:]
+                else:
+                    waveform = data[start_frame : start_frame + num_frames]
+                
+                # Copy to avoid issues with read-only memmap buffer and divide to normalize
+                waveform = torch.from_numpy(waveform.copy()).float() / 32768.0
+                return waveform
+            except Exception as e:
+                print(f"Warning: Failed to load npy {path}: {e}. Returning zeros.")
+                return torch.zeros(num_frames if num_frames > 0 else 16000)
 
-    def _get_aligned_dry(self, clean_mono, rir_list):
-        """Extracts direct path (peak) from RIRs and applies to mono speech for alignment."""
-        channels = []
-        for rir_chan in rir_list:
-            # Find the peak (direct path)
-            peak_idx = np.argmax(np.abs(rir_chan))
-            peak_val = rir_chan[peak_idx]
+        # 2. torchaudio fallback (Standard method)
+        try:
+            waveform, sr = torchaudio.load(
+                path, 
+                frame_offset=start_frame, 
+                num_frames=num_frames
+            )
             
-            # Create a delta RIR (only peak remains)
-            delta_rir = np.zeros_like(rir_chan)
-            delta_rir[peak_idx] = peak_val
-            
-            # Convolve to get aligned dry
-            dry_aligned = convolve(clean_mono, delta_rir, mode='full')
-            channels.append(dry_aligned)
-            
-        # Shape match (truncate to same target_len will be handled by calling logic or padding here)
-        result = np.stack(channels, axis=0)
-        return result
+            # Ensure mono
+            if waveform.shape[0] > 1:
+                waveform = waveform[0]
+            else:
+                waveform = waveform.squeeze(0)
 
-    def _apply_bcm_modeling(self, audio_mc, mic_config):
-        """Applies BCM-specific physics (LPF + Noise Attenuation) to the last channel."""
-        if not mic_config.get('use_bcm'):
-            return audio_mc
-            
-        bcm_ch = -1
-        fs = self.target_sr
-        cutoff = mic_config.get('bcm_cutoff_hz', 500.0)
+            if sr != self.target_sr:
+                pass
+                
+            return waveform
+        except Exception as e:
+            # Fallback for corrupted files or torchcodec bugs
+            print(f"Warning: Failed to load {path}: {e}. Returning zeros.")
+            total_frames = num_frames if num_frames > 0 else 16000
+            return torch.zeros(total_frames)
+
+    def _get_noise_long_enough(self, target_samples):
+        # Pick a random noise file
+        noise_id, noise_path = random.choice(self.noise_data)
         
-        # 1. Low Pass Filter (BCM only senses low-freq vibrations)
-        sos = butter(4, cutoff, btype='low', fs=fs, output='sos')
-        audio_mc[bcm_ch] = sosfilt(sos, audio_mc[bcm_ch])
+        if str(noise_path).endswith(".npy"):
+            data = np.load(noise_path, mmap_mode='r')
+            num_frames = data.shape[0]
+        else:
+            # In torchaudio 2.10, .info() is missing/integrated into torchcodec
+            decoder = AudioDecoder(noise_path)
+            num_frames = int(decoder.metadata.duration_seconds * decoder.metadata.sample_rate)
         
-        return audio_mc
+        if num_frames > target_samples:
+            max_start = num_frames - target_samples
+            start = random.randint(0, max_start)
+            return self._load_audio(noise_path, start_frame=start, num_frames=target_samples)
+        else:
+            # If noise is too short, fall back to loading whole and looping (rare for this dataset)
+            noise_wav = self._load_audio(noise_path)
+            while noise_wav.shape[0] < target_samples:
+                # Append another random noise
+                extra_id, extra_path = random.choice(self.noise_data)
+                extra_wav = self._load_audio(extra_path)
+                noise_wav = torch.cat([noise_wav, extra_wav], dim=0)
+            return noise_wav[:target_samples]
+    
+    def _apply_rir(self, audio, rirs, target_len): pass # Deprecated for GPU
+    def _get_aligned_dry(self, audio, rirs, target_len): pass # Deprecated for GPU
+    def _apply_bcm_modeling(self, audio, mic_config): pass # Deprecated for GPU
 
     def __getitem__(self, idx):
-        with Session(self.engine) as session:
-            # 1. Pick Speech
-            speech_id = self.speech_ids[idx]
-            speech_meta = session.get(SpeechFile, speech_id)
-            clean_mono = self._load_audio(speech_meta.path).numpy()
-            target_len = len(clean_mono)
+        # 1. Pick Speech
+        id, path = self.speech_data[idx]
+        clean_mono = self._load_audio(path) 
+        
+        if self.chunk_size:
+            L = clean_mono.shape[0]
+            if L >= self.chunk_size:
+                start = random.randint(0, L - self.chunk_size)
+                clean_mono = clean_mono[start : start + self.chunk_size]
+            else:
+                clean_mono = F.pad(clean_mono, (0, self.chunk_size - L))
+        
+        target_len = clean_mono.shape[0]
 
-            # 2. Pick Random RIR and parse N
-            rir_id = random.choice(self.rir_ids)
-            rir_meta = session.get(RIRFile, rir_id)
-            with open(rir_meta.path, 'rb') as f:
-                rir_data = pickle.load(f)
+        # 2. Pick Random RIR (Scalable Loading)
+        rir_id, rir_path = random.choice(self.rir_data)
+        rir_item = self._get_rir_tensor(rir_path)
+        
+        rir_tensor = rir_item['tensor']
+        num_available_sources = rir_item['num_sources']
+        meta = rir_item['meta']
+        
+        # 3. Collect Raw Noises (GPU will handle mixing)
+        noise_waveforms = torch.zeros((self.max_sources_supported - 1, target_len), dtype=torch.float32)
+        for s in range(1, min(num_available_sources, self.max_sources_supported)):
+            noise_waveforms[s-1] = self._get_noise_long_enough(target_len)
             
-            meta = rir_data['meta']
-            mic_config = meta['mic_config']
-            num_mics = len(rir_data['rirs'])
-            num_available_sources = len(rir_data['rirs'][0])
+        # 4. Clean mic_config
+        clean_mic_config = {k: v for k, v in meta['mic_config'].items() if v is not None}
             
-            # 3. Process Speech with RIR Source 0 (Target position)
-            speech_rir_mics = [rir_data['rirs'][m][0] for m in range(num_mics)]
-            
-            # Spatialized (Reverberant)
-            speech_mc = self._apply_rir(clean_mono, speech_rir_mics, target_len=target_len)
-            speech_mc = self._apply_bcm_modeling(speech_mc, mic_config)
-            
-            # Aligned Dry (Direct path only)
-            dry_mc = self._get_aligned_dry(clean_mono, speech_rir_mics)
-            # Truncate/Pad dry_mc to target_len
-            if dry_mc.shape[1] > target_len:
-                dry_mc = dry_mc[:, :target_len]
-            elif dry_mc.shape[1] < target_len:
-                dry_mc = np.pad(dry_mc, ((0, 0), (0, target_len - dry_mc.shape[1])))
-                
-            dry_mc = self._apply_bcm_modeling(dry_mc, mic_config)
-            
-            # 4. Process Noises with RIR Sources 1..N
-            noise_mc_total = np.zeros_like(speech_mc)
-            noise_components = []
-            
-            # BCM Noise Attenuation Param
-            bcm_atten_db = mic_config.get('bcm_noise_attenuation_db', 20.0)
-            bcm_atten_factor = 10 ** (-bcm_atten_db / 20.0)
-
-            for k in range(1, num_available_sources):
-                noise_mono = self._get_noise_long_enough(target_len, session).numpy()
-                noise_rir_mics = [rir_data['rirs'][m][k] for m in range(num_mics)]
-                noise_spatialized = self._apply_rir(noise_mono, noise_rir_mics, target_len=target_len)
-                
-                # Apply BCM modeling (Filtering + Isolation)
-                noise_spatialized = self._apply_bcm_modeling(noise_spatialized, mic_config)
-                if mic_config.get('use_bcm'):
-                    noise_spatialized[-1] *= bcm_atten_factor # Isolation attenuation
-
-                noise_mc_total += noise_spatialized
-                noise_components.append(noise_spatialized)
-
-            # 5. SNR Scaling (Calculated based on Air Microphones for realism)
-            air_ch_idx = slice(0, num_mics-1) if mic_config.get('use_bcm') else slice(0, num_mics)
-            clean_rms = np.sqrt(np.mean(speech_mc[air_ch_idx]**2))
-            noise_rms = np.sqrt(np.mean(noise_mc_total[air_ch_idx]**2))
-            
-            snr = random.uniform(*self.snr_range)
-            if noise_rms > 0:
-                target_noise_rms = clean_rms / (10**(snr/20))
-                noise_mc_total *= (target_noise_rms / noise_rms)
-                # Apply same scaling to components for verification consistency
-                noise_components = [nc * (target_noise_rms / noise_rms) for nc in noise_components]
-
-            # 6. Final Mix
-            noisy_mc = speech_mc + noise_mc_total
-
-            return {
-                "noisy": torch.from_numpy(noisy_mc).float(),
-                "clean": torch.from_numpy(speech_mc).float(), 
-                "aligned_dry": torch.from_numpy(dry_mc).float(),
-                "snr": snr,
-                "rir_id": rir_id,
-                "rir_path": rir_meta.path,
-                "speech_only": torch.from_numpy(speech_mc).float(),
-                "noise_only": torch.from_numpy(noise_mc_total).float(),
-                "noise_components": [torch.from_numpy(nc).float() for nc in noise_components]
-            }
+        return {
+            "raw_speech": clean_mono,
+            "raw_noises": noise_waveforms,
+            "rir_tensor": rir_tensor,
+            "num_sources": num_available_sources, 
+            "snr": random.uniform(*self.snr_range),
+            "mic_config": clean_mic_config,
+            "rir_id": 0, # Placeholder
+            "rir_path": rir_item['path'],
+        }
 
 # --- Quick Test Logic ---
 if __name__ == "__main__":
@@ -217,5 +204,5 @@ if __name__ == "__main__":
     print(f"Dataset length: {len(dataset)}")
     
     sample = dataset[0]
-    print(f"Sample Noisy Shape: {sample['noisy'].shape}") # Expected (5, target_len)
+    print(f"Sample Speech Shape: {sample['raw_speech'].shape}") # Expected (target_len,)
     print(f"Sample SNR: {sample['snr']:.2f} dB")

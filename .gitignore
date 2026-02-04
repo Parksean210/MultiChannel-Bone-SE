@@ -36,7 +36,9 @@ data/**
 # ==========================
 # 4. 학습 로그 & 모델 (MLflow/Lightning)
 # ==========================
-mlruns/             # MLflow 로컬 저장소
+mlruns/**
+!mlruns/
+!mlruns/.gitkeep
 logs/               # Lightning 로그 및 체크포인트
 lightning_logs/     # Lightning 기본 로그 폴더
 

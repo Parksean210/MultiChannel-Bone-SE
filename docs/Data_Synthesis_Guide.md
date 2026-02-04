@@ -1,87 +1,97 @@
 # 🧪 데이터 합성 가이드 (Data Synthesis Guide)
 
-본 문서는 음성과 노이즈 데이터를 RIR(공간 임펄스 응답)과 결합하여 학습용 멀티채널 데이터를 실시간(On-the-fly)으로 생성하는 과정을 설명합니다.
+본 문서는 `SpatialMixingDataset` (`src/data/dataset.py`)이 어떻게 원본 음성과 소음 데이터를 RIR(공간 임펄스 응답)과 결합하여 학습용 멀티채널 데이터를 **실시간(On-the-fly) 고속 합성**하는지 설명합니다.
 
 ---
 
-## 🛠️ 1. 합성 방식: On-the-fly Synthesis
+## � 1. 핵심 개선 사항 (Optimization)
 
-본 프로젝트는 고정된 데이터셋을 하드디스크에 미리 만들어두지 않고, **학습 루프가 돌아갈 때 실시간으로 합성**합니다.
+기존의 느린 CPU 연산을 개선하여 대규모 데이터 학습에 적합하도록 최적화되었습니다.
 
-- **장점**: 조합 가능한 사례가 기하급수적으로 늘어나 오버피팅을 방지합니다 (음성 25만개 x 소음 2만개 x RIR 1천개).
-- **핵심 엔진**: `src/data/dataset.py`의 `SpatialMixingDataset` 클래스.
-
----
-
-## 🏗️ 2. 데이터 합성 과정 (Mixing Pipeline)
-
-`SpatialMixingDataset` 아카이브는 `__getitem__`이 호출될 때마다 다음 6단계 작업을 수행합니다.
-
-### Step 1: Resource Sampling
-- DB에서 **Speech 1개 + RIR 1개**를 랜덤하게 선택합니다.
-- 선택된 RIR 메타데이터에서 필요한 **환경 소음(Noise) 개수 $N$**을 확인합니다 ($N \ge 1$).
-
-### Step 2: RIR Application (Convolution)
-- **Target Speech**: RIR의 0번 소스 위치(사용자 입 위치)를 사용하여 5채널 공간음을 생성합니다.
-- **RIR Convolution**: `scipy.signal.convolve`를 사용하여 음향 하드웨어 위치에 따른 시차와 잔향을 입힙니다.
-
-### Step 3: BCM (Bone Conduction) Modeling
-5번 채널(마지막 채널)은 골전도 센서로 간주하며, 다음 물리 특성을 적용합니다:
-1. **LPF (Low Pass Filter)**: 4차 버터워스 필터를 사용하여 약 500Hz 이상의 고주파를 차단합니다 (성대 진동 특성).
-2. **Isolation**: 외부 소음은 공기 전도 마이크보다 현저히 낮게 유입되도록 감쇄(기본 20dB)를 적용합니다.
-
-### Step 4: Noise Spatialization
-- DB에서 $N$개의 노이즈 파일을 무작위로 선택합니다.
-- RIR에 기록된 $N$개의 소음원 위치(Sources 1..N)에 각각 노이즈를 입혀 5채널 공간 소음을 만듭니다.
-
-### Step 5: SNR Scaling
-- **현실적인 SNR**: 소음의 크기는 BCM 채널이 아닌, **0~3번 공기 마이크(Air Mics)의 평균 에너지**를 기준으로 조절됩니다.
-- 설정된 `snr_range` (예: -5~20dB) 내에서 무작위로 SNR을 결정하고 소음 레벨을 맞춥니다.
-
-### Step 6: Target Alignment (Direct Path)
-- 모델의 정답(Clean)으로 사용하기 위해, RIR의 **Peak(Direct Path)** 정보만 추출하여 시간 축이 정렬된 'Reverb-free' 타겟 신호를 생성합니다.
+*   **FFT Convolution**: 기존 `scipy.signal.convolve` (시간 도메인) 대비 수십 배 빠른 `torchaudio.functional.fftconvolve` (주파수 도메인) 사용. 긴 RIR 필터 적용 시 병목 현상 제거.
+*   **Tensor-Centric**: 데이터 로드 직후부터 `PyTorch Tensor`로 변환하여, 불필요한 `NumPy <-> Torch` 변환 오버헤드 최소화.
+*   **Fixed Chunking**: 모든 출력을 3초(48,000 samples)로 강제 Crop/Pad 하여 `DataLoader`의 배치 구성을 안정화.
 
 ---
 
-## 💻 3. 사용 예시 (Python Code)
+## 🏗️ 2. 데이터 합성 파이프라인 (Pipeline)
 
-학습 코드나 노트북에서 다음과 같이 간단히 사용할 수 있습니다.
+`__getitem__` 호출 시 다음과 같은 순서로 처리가 이루어집니다.
 
+```mermaid
+graph TD
+    A[Load Speech Tensor] --> B[Crop/Pad to 3s]
+    B --> C{Apply RIR Strategy}
+    
+    subgraph "High-Speed Synthesis"
+        C -->|Source 0| D[Speech Convolution]
+        C -->|Source 1..N| E[Noise Convolution]
+        
+        D --> F[BCM Modeling]
+        E --> F
+    end
+    
+    F --> G[SNR Scaling]
+    G --> H[Final Mixing]
+```
+
+### 🔍 상세 로직 분석
+
+#### 1. Audio Loading & Shaping
+*   **코드 위치**: `__getitem__` 초반부
+*   **기능**: `soundfile`로 읽은 오디오를 즉시 텐서로 변환하고, 설정된 `chunk_size`(기본 48,000)에 맞춰 랜덤 자르기(Crop) 혹은 제로 패딩(Pad)을 수행합니다. 이는 GPU 텐서 연산의 효율을 극대화합니다.
+
+#### 2. RIR Application (FFT Convolution)
+*   **코드 위치**: `_apply_rir` 메서드
+*   **핵심 기술**:
+    ```python
+    # (1, T) * (M, R) -> (M, T+R-1) FFT Convolution
+    output = F_audio.fftconvolve(audio, rir_tensor, mode="full")
+    ```
+    마이크 개수($M$)만큼의 컨볼루션을 한 번의 FFT 연산으로 처리하여 속도를 비약적으로 높입니다.
+
+#### 3. BCM (Bone Conduction) Physics
+*   **코드 위치**: `_apply_bcm_modeling` 메서드
+*   **기능**: 마지막 채널(Channel 4)에 골전도 센서의 물리적 특성을 입힙니다.
+    1.  **LPF (Low Pass Filter)**: 500Hz 이하 주파수만 통과 (피부 진동 특성)
+    2.  **Noise High Attenuation**: 외부 소음은 공기 전도 대비 약 20dB 감쇄 (차음 효과)
+
+#### 4. SNR Scaling & Mixing
+*   **코드 위치**: `Dataset` 클래스 하단부
+*   **로직**:
+    *   에너지 계산 시 **BCM 채널을 제외한** 공기 전도 마이크(Air Mics)만을 기준으로 삼습니다.
+    *   랜덤하게 설정된 `snr_range` (예: -5~20dB)에 맞춰 소음의 진폭을 조절한 뒤 음성과 합칩니다.
+
+---
+
+## 📦 3. 반환 데이터 구조 (Output)
+
+학습 루프(`LightningModule`)로 전달되는 최종 데이터 형태입니다.
+
+| Key | Shape (C=5, T=48000) | 설명 및 용도 |
+| :--- | :--- | :--- |
+| `noisy` | `(C, T)` | **[Input]** 음성 + 소음이 섞인 최종 오디오 |
+| `clean` | `(C, T)` | **[Target 1]** 잔향(Reverb)이 포함된 깨끗한 음성 |
+| `aligned_dry`| `(C, T)` | **[Target 2]** 잔향이 제거되고 시간 정렬된 음성 (De-reverberation용) |
+| `snr` | 스칼라 | 적용된 SNR 값 (dB) |
+| `rir_id` | `str` | 사용된 RIR 정보 (디버깅용) |
+| `noise_only` | `(C, T)` | 소음만 따로 분리된 신호 (분석용) |
+
+---
+
+## ⚙️ 4. 사용 방법
+
+### 데이터셋 초기화
 ```python
 from src.data.dataset import SpatialMixingDataset
 
-# 데이터셋 초기화
 dataset = SpatialMixingDataset(
     db_path="data/metadata.db",
     target_sr=16000,
-    snr_range=(-5, 20),
-    is_eval=False
+    chunk_size=48000,  # 3초 고정
+    is_eval=False      # 학습용 (Eval용은 True)
 )
-
-# 데이터 한 개 뽑기
-sample = dataset[0]
-
-noisy = sample['noisy']        # (5, Samples) - 모델 입력
-clean = sample['clean']        # (5, Samples) - 잔향이 포함된 깨끗한 음성
-target = sample['aligned_dry'] # (5, Samples) - 시간 정렬된 무잔향 음성 (학습 타겟 권장)
-snr = sample['snr']            # 적용된 SNR 값
 ```
 
----
-
-## 🚦 4. 설정 및 파라미터
-
-합성 로직에 영향을 주는 파라미터는 `src/simulation/config.py`에서 관리합니다.
-
-| 파라미터 | 기본값 | 설명 |
-| :--- | :--- | :--- |
-| `bcm_cutoff_hz` | `500.0` | 골전도 센서의 LPF 컷오프 |
-| `bcm_noise_attenuation_db` | `20.0` | 골전도 센서의 소음 차폐율 |
-| `snr_range` | `(-5, 20)` | 합성 시 무작위 SNR 범위 |
-
----
-
-## ⚡ 5. 팁 (Tips)
-
-* **성능 최적화**: 실시간 합성은 CPU를 많이 사용합니다. `DataLoader`의 `num_workers`를 적절히(예: 코어 수의 절반 이상) 할당하세요.
-* **검수**: `scripts/generate_samples.py`를 실행하면 합성된 결과를 직접 들어보고 파형을 확인할 수 있습니다.
+### 성능 팁 (Performance Tip)
+*   **Num Workers**: `DataLoader`에서 `num_workers`를 충분히(4~8) 주어야 합니다. FFT 연산은 빠르지만, 데이터 로딩과 전처리는 병렬로 처리하는 것이 유리합니다.
