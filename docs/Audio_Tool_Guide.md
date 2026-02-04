@@ -36,7 +36,17 @@ uv run python scripts/audio_tool.py wav2npy data/raw/speech
 uv run python scripts/audio_tool.py wav2npy data/raw/speech --delete
 ```
 
-### 3. 오디오 리샘플링 (Turbo Mode)
+### 3. NPY 파일을 WAV로 복원 (검증용)
+`.npy` 포맷으로 변환된 데이터를 다시 `.wav`로 복원하여 변환이 잘 되었는지 확인합니다.
+```bash
+# 특정 샘플 레이트로 복원
+uv run python scripts/audio_tool.py npy2wav data/raw/speech --sr 16000
+
+# 복원 후 원본(.npy) 삭제
+uv run python scripts/audio_tool.py npy2wav data/raw/speech --sr 16000 --delete
+```
+
+### 4. 오디오 리샘플링 (Turbo Mode)
 시스템 `ffmpeg`를 활용하여 폴더 내 모든 `.wav` 파일을 리샘플링합니다.
 ```bash
 # data/raw/noise 폴더 내 모든 wav를 16kHz로 리샘플링 (원본 유지)

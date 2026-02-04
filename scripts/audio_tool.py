@@ -51,6 +51,23 @@ def wav_to_npy_worker(task):
         print(f"Error converting to NPY {path}: {e}")
         return False
 
+def npy_to_wav_worker(task):
+    path, sr, delete = task
+    try:
+        data = np.load(path)
+        # Convert int16 back to float32
+        waveform = torch.from_numpy(data.astype(np.float32)).unsqueeze(0) / 32767.0
+        output_path = os.path.splitext(path)[0] + ".wav"
+        
+        torchaudio.save(output_path, waveform, sr)
+        
+        if delete:
+            os.remove(path)
+        return True
+    except Exception as e:
+        print(f"Error restoring WAV from NPY {path}: {e}")
+        return False
+
 def resample_worker(task):
     path, target_sr, delete = task
     try:
@@ -102,6 +119,12 @@ def main():
     w2n.add_argument("dir", help="Root directory")
     w2n.add_argument("--delete", action="store_true", help="Delete original wav files after conversion")
     
+    # NPY to WAV (Restore)
+    n2w = subparsers.add_parser("npy2wav", parents=[parent_parser])
+    n2w.add_argument("dir", help="Root directory")
+    n2w.add_argument("--sr", type=int, default=16000, help="Target sample rate for restoration")
+    n2w.add_argument("--delete", action="store_true", help="Delete original npy files after restoration")
+    
     # Resample
     res = subparsers.add_parser("resample", parents=[parent_parser])
     res.add_argument("dir", help="Root directory")
@@ -125,6 +148,15 @@ def main():
         print(f"Converting {len(files)} WAV files to NPY (delete={args.delete}) using {args.workers} workers...")
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
             futures = [ex.submit(wav_to_npy_worker, t) for t in tasks]
+            for _ in tqdm(as_completed(futures), total=len(futures)):
+                pass
+            
+    elif args.command == "npy2wav":
+        files = get_audio_files(args.dir, "npy")
+        tasks = [(f, args.sr, args.delete) for f in files]
+        print(f"Restoring {len(files)} NPY files to WAV ({args.sr}Hz) using {args.workers} workers...")
+        with ProcessPoolExecutor(max_workers=args.workers) as ex:
+            futures = [ex.submit(npy_to_wav_worker, t) for t in tasks]
             for _ in tqdm(as_completed(futures), total=len(futures)):
                 pass
             
