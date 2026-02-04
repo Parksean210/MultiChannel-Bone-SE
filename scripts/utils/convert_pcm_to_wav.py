@@ -98,19 +98,24 @@ def main():
     errors = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
-        # Define a helper to package arguments
         def task_wrapper(pcm_path):
             wav_path = pcm_path.with_suffix(".wav")
-            return convert_single_file(pcm_path, wav_path, args.sr, args.channels, dtype, args.overwrite)
+            success, result = convert_single_file(pcm_path, wav_path, args.sr, args.channels, dtype, args.overwrite)
+            
+            # 성공 시 즉시 원본 PCM 삭제 (용량 확보를 위해)
+            if success and args.delete_pcm:
+                try:
+                    pcm_path.unlink()
+                except Exception as e:
+                    return False, f"Error deleting {pcm_path}: {e}"
+            return success, result
 
-        # map returns an iterator, avoiding the massive overhead of creating 600k Future objects at once
+        # 결과를 바로 소모하도록 map 사용
         results = list(tqdm(executor.map(task_wrapper, pcm_files), total=len(pcm_files), desc="Converting"))
 
     for success, result in results:
         if success:
             success_count += 1
-            if args.delete_pcm:
-                result.unlink()
         else:
             errors.append(result)
 
