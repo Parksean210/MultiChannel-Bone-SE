@@ -42,11 +42,6 @@ uv run python scripts/audio_tool.py resample data/raw/noise --sr 16000
 uv run python scripts/audio_tool.py resample data/raw/noise --sr 16000 --delete
 ```
 
-### 4. 불필요한 TXT 파일 삭제
-데이터셋 폴더 내에 섞여 있는 불필요한 `.txt` 파일들을 재귀적으로 모두 삭제합니다.
-```bash
-uv run python scripts/audio_tool.py clean_txt data/raw/noise
-```
 
 ## 주의사항
 - **FFmpeg 기반:** `resample` 기능을 사용하려면 시스템에 `ffmpeg`가 설치되어 있어야 합니다.

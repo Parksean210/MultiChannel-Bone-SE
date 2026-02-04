@@ -105,10 +105,6 @@ def main():
     res.add_argument("--sr", type=int, default=16000, help="Target sample rate")
     res.add_argument("--delete", action="store_true", help="Explicitly delete old file while saving (safer for space)")
     
-    # Clean TXT
-    clean = subparsers.add_parser("clean_txt", parents=[parent_parser])
-    clean.add_argument("dir", help="Root directory to clean txt files from")
-    
     args = parser.parse_args()
     
     if args.command == "pcm2wav":
@@ -137,14 +133,6 @@ def main():
             for _ in tqdm(as_completed(futures), total=len(futures)):
                 pass
             
-    elif args.command == "clean_txt":
-        files = get_audio_files(args.dir, "txt")
-        print(f"Cleaning {len(files)} text files from {args.dir}...")
-        for f in tqdm(files):
-            try:
-                os.remove(f)
-            except Exception as e:
-                print(f"Error removing {f}: {e}")
 
 if __name__ == "__main__":
     main()
