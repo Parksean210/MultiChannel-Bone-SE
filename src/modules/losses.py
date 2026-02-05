@@ -5,21 +5,25 @@ from typing import List, Optional
 
 class SISDRLoss(nn.Module):
     """
-    Scale-Invariant Signal-to-Distortion Ratio (SI-SDR) Loss.
-    Standard time-domain loss for speech enhancement/separation.
-    Based on: https://arxiv.org/abs/1811.02508
+    Scale-Invariant Signal-to-Distortion Ratio (SI-SDR) 손실 함수.
+    음성 향상 및 분리 분야에서 표준적으로 사용되는 시간 영역(Time-domain) 평가지표이자 손실 함수입니다.
+    참조 논문: https://arxiv.org/abs/1811.02508
     """
     def __init__(self, eps: float = 1e-8):
+        """
+        Args:
+            eps: 수치적 안정성을 위한 미소값 (Divide by zero 방지)
+        """
         super().__init__()
         self.eps = eps
 
     def forward(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            preds: Estimated spectrogram/waveform (B, C, T) or (B, T)
-            targets: Clean speech (Reference) (B, C, T) or (B, T)
+            preds: 모델이 추정한 음성 파형 (B, C, T) 또는 (B, T)
+            targets: 참조용 클린 음성 파형 (B, C, T) 또는 (B, T)
         Returns:
-            Scalar loss value (Negative SI-SDR)
+            Negative SI-SDR (최소화를 위해 음수 처리된 값)
         """
         # Ensure shapes match
         if preds.shape != targets.shape:
@@ -54,14 +58,21 @@ class SISDRLoss(nn.Module):
 
 class STFTLoss(nn.Module):
     """
-    Single-resolution STFT Loss.
-    Computes Spectral Convergence Loss + Log Magnitude Loss.
+    단일 해상도 STFT 손실 함수.
+    Spectral Convergence Loss와 Log Magnitude Loss의 합으로 구성됩니다.
     """
     def __init__(self, 
                  fft_size: int = 1024, 
                  hop_size: int = 120, 
                  win_length: int = 600, 
                  window: str = "hann_window"):
+        """
+        Args:
+            fft_size: FFT 포인트 크기
+            hop_size: 프레임 간격 (Hop size)
+            win_length: 윈도우 길이
+            window: 사용할 윈도우 함수 명칭
+        """
         super().__init__()
         self.fft_size = fft_size
         self.hop_size = hop_size
@@ -104,8 +115,8 @@ class STFTLoss(nn.Module):
 
 class MultiResolutionSTFTLoss(nn.Module):
     """
-    Multi-Resolution STFT Loss.
-    Computes STFT Loss over multiple FFT resolutions to capture both coarse and fine spectral details.
+    다중 해상도(Multi-Resolution) STFT 손실 함수.
+    다양한 FFT 해상도에서 손실을 계산하여 주파수 영역의 세밀한 특징과 거시적인 특징을 동시에 학습합니다.
     """
     def __init__(self,
                  fft_sizes: List[int] = [1024, 2048, 512],
@@ -114,6 +125,14 @@ class MultiResolutionSTFTLoss(nn.Module):
                  window: str = "hann_window",
                  factor_sc: float = 0.5,
                  factor_mag: float = 0.5):
+        """
+        Args:
+            fft_sizes: 각 STFT 계층의 FFT 크기 리스트
+            hop_sizes: 각 STFT 계층의 Hop 크기 리스트
+            win_lengths: 각 STFT 계층의 윈도우 길이 리스트
+            factor_sc: Spectral Convergence 가중치
+            factor_mag: Log Magnitude 가중치
+        """
         super().__init__()
         
         assert len(fft_sizes) == len(hop_sizes) == len(win_lengths)
@@ -135,9 +154,14 @@ class MultiResolutionSTFTLoss(nn.Module):
 
 class CompositeLoss(nn.Module):
     """
-    Weighted combination of SI-SDR and Multi-Resolution STFT Loss.
+    복합 손실 함수 (Hybrid Loss).
+    시간 영역의 SI-SDR 손실과 주파수 영역의 Multi-Resolution STFT 손실을 결합합니다.
     """
-    def __init__(self, alpha: float = 0.1): # alpha: weight for STFT loss
+    def __init__(self, alpha: float = 0.1): 
+        """
+        Args:
+            alpha: 주파수 영역 손실(MR-STFT)에 적용할 가중치
+        """
         super().__init__()
         self.sisdr = SISDRLoss()
         self.mrstft = MultiResolutionSTFTLoss()

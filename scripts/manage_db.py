@@ -10,35 +10,35 @@ from src.db.engine import create_db_engine
 from src.db.manager import DatabaseManager
 
 def main():
-    parser = argparse.ArgumentParser(description="Unified Database Management Tool")
-    parser.add_argument("--db_path", type=str, default="data/metadata.db", help="Path to SQLite database")
+    parser = argparse.ArgumentParser(description="음향 향상 프로젝트 통합 데이터베이스 관리 도구")
+    parser.add_argument("--db_path", type=str, default="data/metadata.db", help="SQLite 데이터베이스 파일 경로")
     
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Stats Command
-    subparsers.add_parser("stats", help="Show database statistics")
+    # 통계 확인 명령어
+    subparsers.add_parser("stats", help="데이터베이스 구축 현황 및 통계 출력")
 
-    # Sync Command
-    subparsers.add_parser("sync", help="Synchronize .wav paths to .npy if missing")
+    # 경로 동기화 명령어
+    subparsers.add_parser("sync", help="WAV 파일의 NPY 전환에 따른 DB 경로 자동 동기화")
 
-    # Speech Command
-    speech_parser = subparsers.add_parser("speech", help="Index speech data")
-    speech_parser.add_argument("--path", type=str, required=True, help="Root directory")
-    speech_parser.add_argument("--dataset", type=str, required=True, help="Dataset name")
-    speech_parser.add_argument("--eval", action="store_true", help="Index as eval data")
-    speech_parser.add_argument("--sr", type=int, default=16000, help="Sample rate for .npy files")
+    # 음성 데이터 인덱싱
+    speech_parser = subparsers.add_parser("speech", help="음성(Speech) 데이터 인덱싱")
+    speech_parser.add_argument("--path", type=str, required=True, help="데이터 최상위 디렉토리")
+    speech_parser.add_argument("--dataset", type=str, required=True, help="데이터셋 식별자")
+    speech_parser.add_argument("--eval", action="store_true", help="평가용(Eval) 데이터로 분류")
+    speech_parser.add_argument("--sr", type=int, default=16000, help="NPY 변환 시 사용된 샘플 레이트")
 
-    # Noise Command
-    noise_parser = subparsers.add_parser("noise", help="Index noise data")
-    noise_parser.add_argument("--path", type=str, required=True, help="Root directory")
-    noise_parser.add_argument("--category", type=str, required=True, help="Noise category")
-    noise_parser.add_argument("--sub", type=str, default=None, help="Manual sub-category override")
-    noise_parser.add_argument("--sub_depth", type=int, default=1, help="Directory depth for auto sub-category")
-    noise_parser.add_argument("--sr", type=int, default=16000, help="Sample rate for .npy files")
+    # 잡음 데이터 인덱싱
+    noise_parser = subparsers.add_parser("noise", help="잡음(Noise) 데이터 인덱싱")
+    noise_parser.add_argument("--path", type=str, required=True, help="데이터 최상위 디렉토리")
+    noise_parser.add_argument("--category", type=str, required=True, help="잡음 대분류")
+    noise_parser.add_argument("--sub", type=str, default=None, help="소분류 강제 지정")
+    noise_parser.add_argument("--sub_depth", type=int, default=1, help="디렉토리 구조상 소분류 추출 깊이")
+    noise_parser.add_argument("--sr", type=int, default=16000, help="샘플 레이트")
 
-    # RIR Command
-    rir_parser = subparsers.add_parser("rir", help="Index RIR data (.pkl or .wav)")
-    rir_parser.add_argument("--path", type=str, required=True, help="Root directory")
+    # RIR 데이터 인덱싱
+    rir_parser = subparsers.add_parser("rir", help="방 임펄스 응답(RIR) 데이터 인덱싱 (.pkl, .wav)")
+    rir_parser.add_argument("--path", type=str, required=True, help="RIR 데이터 디렉토리")
 
     args = parser.parse_args()
 

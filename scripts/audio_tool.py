@@ -9,12 +9,14 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 def get_audio_files(root_dir, extension):
+    """지정된 디렉토리 내의 특정 확장자를 가진 오디오 파일 목록을 반환합니다."""
     return glob.glob(os.path.join(root_dir, f"**/*.{extension}"), recursive=True)
 
 def pcm_to_wav_worker(task):
+    """PCM 포맷 데이터를 WAV 파일로 변환합니다."""
     path, sr, delete = task
     try:
-        # Assuming int16 PCM
+        # 단일 채널(Mono) 및 16-bit PCM 가가정
         with open(path, 'rb') as f:
             pcm_data = np.frombuffer(f.read(), dtype=np.int16)
         
@@ -32,12 +34,12 @@ def pcm_to_wav_worker(task):
         return False
 
 def wav_to_npy_worker(task):
+    """고속 로딩을 위해 WAV 데이터를 정수형 16비트(int16) NumPy 바이너리 포맷으로 변환합니다."""
     path, delete = task
     try:
-        # soundfile.read returns (Samples, Channels)
         waveform, sr = sf.read(path)
         
-        # Ensure mono and flatten
+        # 다채널 신호인 경우 모노(Mono)로 믹싱
         if len(waveform.shape) > 1:
             waveform = np.mean(waveform, axis=1)
             
@@ -70,9 +72,10 @@ def npy_to_wav_worker(task):
         return False
 
 def resample_worker(task):
+    """시스템 FFmpeg 엔진을 활용하여 고속 리샘플링 및 채널 변환을 수행합니다."""
     path, target_sr, delete = task
     try:
-        # "Fury Fast Mode": Using system ffmpeg directly
+        # 상용 수준의 고속 처리를 위해 외부 FFmpeg 바이너리 직접 호출
         # -ac 1: Ensure mono
         # -ar {target_sr}: Set sample rate
         # -v error: Be quiet
@@ -126,11 +129,11 @@ def main():
     n2w.add_argument("--sr", type=int, default=16000, help="Target sample rate for restoration")
     n2w.add_argument("--delete", action="store_true", help="Delete original npy files after restoration")
     
-    # Resample
+    # 리샘플링
     res = subparsers.add_parser("resample", parents=[parent_parser])
-    res.add_argument("dir", help="Root directory")
-    res.add_argument("--sr", type=int, default=16000, help="Target sample rate")
-    res.add_argument("--delete", action="store_true", help="Explicitly delete old file while saving (safer for space)")
+    res.add_argument("dir", help="대상 디렉토리")
+    res.add_argument("--sr", type=int, default=16000, help="목표 샘플 레이트")
+    res.add_argument("--delete", action="store_true", help="변환 전 원본 파일 삭제 여부")
     
     args = parser.parse_args()
     

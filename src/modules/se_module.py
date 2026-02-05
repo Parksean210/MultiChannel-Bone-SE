@@ -128,6 +128,9 @@ class SEModule(L.LightningModule):
         return batch
 
     def validation_step(self, batch, batch_idx):
+        """
+        검증 단계 루프. 모델의 성능을 평가하고 주기적으로 오디오 샘플을 로깅합니다.
+        """
         batch = self._apply_gpu_synthesis(batch)
         noisy = batch['noisy']
         clean = batch['clean']
@@ -135,25 +138,23 @@ class SEModule(L.LightningModule):
         est_clean = self(noisy)
         loss = self.loss(est_clean, clean)
         
-        # Log validation loss
+        # 검증 손실 로깅
         batch_size = noisy.shape[0]
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
         
-        # Log Audio Samples (Only for the first batch of the epoch)
+        # 에폭의 첫 번째 배치에 대해 오디오 샘플을 시각화/청취용으로 로깅
         if batch_idx == 0:
             self.log_audio_samples(noisy, clean, est_clean)
             
-    def log_audio_samples(self, noisy, clean, est_clean):
+    def log_audio_samples(self, noisy: torch.Tensor, clean: torch.Tensor, est_clean: torch.Tensor):
         """
-        Log audio examples to MLflow/Tensorboard.
-        Logs the first N samples from the batch.
+        추론 결과를 MLflow/Tensorboard에 오디오 형태로 로깅합니다.
+        배치 내의 첫 N개 샘플에 대해 원본, 정답(Clean), 추론 결과를 기록합니다.
         """
-        # Ensure we don't log too many
+        # 로깅할 샘플 수 제한
         num_samples = min(noisy.shape[0], self.num_val_samples_to_log)
         
-        # Get Logger (MLflow or Tensorboard)
-        # Note: Implementation depends on the logger type. 
-        # Here we assume MLflow is mostly used via artifacts or standard Lightning logger integration.
+        # 로거 유무 및 종류를 확인하여 처리
         
         # Move to CPU for logging
         noisy = noisy[:num_samples].detach().cpu()
@@ -176,13 +177,17 @@ class SEModule(L.LightningModule):
              pass
 
     def configure_optimizers(self):
+        """
+        최적화 알고리즘 및 학습률 스케줄러(Scheduler)를 설정합니다.
+        기본적으로 AdamW 최적화기와 ReduceLROnPlateau 스케줄러를 사용합니다.
+        """
         optimizer = torch.optim.AdamW(
             self.parameters(), 
             lr=self.optimizer_config.get('lr', 1e-3),
             weight_decay=self.optimizer_config.get('weight_decay', 0.0)
         )
         
-        # Optional: Add Scheduler (ReduceLROnPlateau is common for SE)
+        # 성능 정체 시 학습률을 감소시키는 스케줄러 설정
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=5
         )

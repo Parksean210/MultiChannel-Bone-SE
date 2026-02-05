@@ -5,17 +5,26 @@ from typing import Optional
 
 class BaseSEModel(nn.Module):
     """
-    모든 음향 향상(Speech Enhancement) 모델의 부모 클래스입니다.
+    음향 향상(Speech Enhancement) 모델의 최상위 추상 클래스입니다.
     
-    이 클래스는 공통적으로 사용되는 STFT(주파수 변환) 및 iSTFT(파형 복원) 기능을 제공하여,
-    자식 모델들이 입출력 규격(Waveform -> Waveform)을 일관되게 유지하도록 돕습니다.
+    기능적 특징:
+    1. STFT/iSTFT 유틸리티 제공: 자식 모델이 주파수 도메인 기반 연산을 일관되게 수행하도록 지원합니다.
+    2. 입출력 규격 표준화: Raw Waveform 입력을 받아 처리 후 다시 Waveform으로 복원하는 인터페이스를 정의합니다.
     """
     def __init__(self, 
                  fs: int = 16000, 
                  n_fft: int = 512, 
                  hop_length: int = 256, 
                  win_length: Optional[int] = 512,
-                 window_type: str = "hann"): # "hann", "hamming", "rect" (no window)
+                 window_type: str = "hann"): 
+        """
+        Args:
+            fs: 샘플 레이트 (Sampling Rate)
+            n_fft: FFT 포인트 크기
+            hop_length: 프레임 간 이동 간격
+            win_length: 프레임 윈도우 길이
+            window_type: 사용할 윈도우 함수 유형 ("hann", "hamming", "rect")
+        """
         super().__init__()
         self.fs = fs
         self.n_fft = n_fft
@@ -36,7 +45,12 @@ class BaseSEModel(nn.Module):
 
     def stft(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Waveform (B, C, T) -> Spectrogram (B, C, F, T) 변환
+        시간 영역 파형(Waveform)을 복소수 푸리에 변환(Complex Spectrogram)으로 변환합니다.
+        
+        Args:
+            x: 입력 파형 (B, C, T)
+        Returns:
+            Spectrogram (B, C, F, T)
         """
         B, C, T = x.shape
         x_flat = x.view(B * C, T)
@@ -56,7 +70,13 @@ class BaseSEModel(nn.Module):
 
     def istft(self, x_spec: torch.Tensor, length: Optional[int] = None) -> torch.Tensor:
         """
-        Spectrogram (B, C, F, T) -> Waveform (B, C, T) 복원
+        복소수 스펙트로그램을 역 푸리에 변환(Inverse STFT)을 통해 시간 영역 파형으로 복원합니다.
+        
+        Args:
+            x_spec: 복소수 스펙트로그램 (B, C, F, T)
+            length: 복원할 파형의 총 샘플 수 (정확한 길이 보정용)
+        Returns:
+            Reconstructed Waveform (B, C, T)
         """
         B, C, F, T = x_spec.shape
         x_flat = x_spec.view(B * C, F, T)
@@ -75,7 +95,13 @@ class BaseSEModel(nn.Module):
 
     def to_frames(self, x: torch.Tensor, center: bool = True) -> torch.Tensor:
         """
-        Waveform (B, C, T) -> Frames (B, C, NumFrames, WinLength)
+        연속된 오디오 신호를 겹치는 프레임(Overlapping Frames) 단위로 분할합니다.
+        
+        Args:
+            x: 입력 파형 (B, C, T)
+            center: 중심 정렬 패딩 적용 여부
+        Returns:
+            Frame-wise Tensor (B, C, NumFrames, WinLength)
         """
         B, C, T = x.shape
         
@@ -106,7 +132,14 @@ class BaseSEModel(nn.Module):
 
     def from_frames(self, frames: torch.Tensor, length: Optional[int] = None, center: bool = True) -> torch.Tensor:
         """
-        Frames (B, C, NumFrames, WinLength) -> Waveform (B, C, T)
+        프레임 단위의 데이터를 COLA(Constant Overlap-Add) 방식을 사용하여 연속된 신호로 다시 합성합니다.
+        
+        Args:
+            frames: 프레임 단위 데이터 (B, C, NumFrames, WinLength)
+            length: 목표 출력 길이
+            center: 중심 정렬 패딩 제거 여부
+        Returns:
+            Synthesized Waveform (B, C, T)
         """
         B, C, NumFrames, WinLength = frames.shape
         

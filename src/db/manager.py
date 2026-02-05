@@ -204,6 +204,9 @@ class DatabaseManager:
         return 0.0, sr_hint
 
     def _check_and_update_path(self, item) -> bool:
+        """
+        파일의 존재 여부를 확인하고, .wav 파일이 유실되었으나 .npy가 존재하는 경우 경로를 업데이트합니다.
+        """
         wav_p = Path(item.path)
         npy_p = wav_p.with_suffix(".npy")
         if not wav_p.exists() and npy_p.exists():
@@ -211,18 +214,23 @@ class DatabaseManager:
             return True
         return False
 
-    def _commit_batches(self, session, entries, batch_size=1000):
+    def _commit_batches(self, session: Session, entries: List, batch_size: int = 1000):
+        """
+        대량의 데이터를 배치 단위로 나누어 트랜잭션을 커밋합니다. DB 부하를 최소화합니다.
+        """
         if not entries:
-            print("No new entries to add.")
+            print("추가할 데이터가 없습니다.")
             return
         
         for i in range(0, len(entries), batch_size):
             session.add_all(entries[i:i + batch_size])
             session.commit()
-        print(f"Successfully added {len(entries)} files.")
+        print(f"성공적으로 {len(entries)}개의 데이터를 추가했습니다.")
 
     def _parse_rir(self, p: Path) -> RIRFile:
-        # Internal parser for RIR files (logic relocated from manager.py)
+        """
+        RIR 파일(.pkl 또는 .wav)을 파싱하여 RIRFile 모델 객체를 생성합니다.
+        """
         room_type = "unknown"; num_noise = 0; num_mic = 4; num_bcm = 1; rt60 = None
         if p.suffix == '.pkl':
             import pickle

@@ -2,8 +2,10 @@ import lightning as L
 from lightning.pytorch.cli import LightningCLI
 
 def cli_main():
-    # Model과 DataModule을 자동으로 연결해주는 사령관 역할
-    # 이 한 줄로 YAML 설정을 읽고 학습(fit), 테스트(test) 등을 수행합니다.
+    """
+    프로젝트의 메인 진입점(Entry Point).
+    LightningCLI를 사용하여 YAML 설정 파일을 기반으로 모델 학습 및 평가를 자동으로 제어합니다.
+    """
     cli = LightningCLI(
         save_config_callback=None,
     )
