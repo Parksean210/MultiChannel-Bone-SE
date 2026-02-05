@@ -59,6 +59,7 @@ def main():
     parser.add_argument('--output_dir', type=str, default='data/rirs', help='Output directory')
     parser.add_argument('--fs', type=int, default=16000, help='Sampling rate')
     parser.add_argument('--rir_len', type=float, default=1.0, help='RIR truncation length in seconds')
+    parser.add_argument('--start_id', type=int, default=0, help='Starting ID for filenames')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -67,9 +68,9 @@ def main():
     base_num_per_worker = args.count // args.workers
     remainder = args.count % args.workers
     
-    print(f"Starting RIR bank generation (Total: {args.count}, Workers: {args.workers}, RIR Len: {args.rir_len}s)...")
+    print(f"Starting RIR bank generation (Total: {args.count}, Workers: {args.workers}, RIR Len: {args.rir_len}s, Start ID: {args.start_id})...")
     processes = []
-    current_start_id = 0
+    current_start_id = args.start_id
     for i in range(args.workers):
         num_for_this_worker = base_num_per_worker + (1 if i < remainder else 0)
         p = mp.Process(target=worker, args=(i, num_for_this_worker, args.output_dir, args.fs, args.rir_len, current_start_id))

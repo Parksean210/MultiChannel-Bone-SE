@@ -20,37 +20,37 @@ class SpatialMixingDataset(Dataset):
     고속 공간 합성(Spatial Mixing) 학습을 위한 데이터셋 클래스.
     SQLite 기반 메타데이터 조회와 .npy 메모리 맵핑(mmap)을 통한 초고속 데이터 로딩을 지원합니다.
     """
-    def __init__(self, db_path: str, target_sr: int = 16000, is_eval: bool = False, snr_range: tuple = (-5, 20), chunk_size: int = 48000):
+    def __init__(self, db_path: str, target_sr: int = 16000, split: str = "train", snr_range: tuple = (-5, 20), chunk_size: int = 48000):
         """
         Args:
             db_path: SQLite 메타데이터 데이터베이스 경로
             target_sr: 목표 샘플 레이트 (기본값: 16kHz)
-            is_eval: 평가용 데이터셋 여부 (True인 경우 eval 테이블 조회)
+            split: 데이터 분할 종류 ('train', 'val', 'test')
             snr_range: 학습 시 무작위로 적용될 SNR 범위 (dB)
             chunk_size: 학습용 오디오 샘플 길이 (샘플 수 기준, 48000 = 3초)
         """
         self.engine = create_db_engine(db_path)
         self.target_sr = target_sr
-        self.is_eval = is_eval
+        self.split = split
         self.snr_range = snr_range
         self.chunk_size = chunk_size
 
         # 데이터베이스 커넥션 병목 현상을 방지하기 위해 초기화 시점에 전체 경로를 메모리에 캐싱
         with Session(self.engine) as session:
             # 1. Speech
-            stmt = select(SpeechFile.id, SpeechFile.path).where(SpeechFile.is_eval == is_eval)
+            stmt = select(SpeechFile.id, SpeechFile.path).where(SpeechFile.split == split)
             self.speech_data = session.exec(stmt).all() # List of (id, path)
             
             # 2. Noise
-            stmt = select(NoiseFile.id, NoiseFile.path)
+            stmt = select(NoiseFile.id, NoiseFile.path).where(NoiseFile.split == split)
             self.noise_data = session.exec(stmt).all() # List of (id, path)
             
             # 3. RIR
-            stmt = select(RIRFile.id, RIRFile.path)
+            stmt = select(RIRFile.id, RIRFile.path).where(RIRFile.split == split)
             self.rir_data = session.exec(stmt).all() # List of (id, path)
             
         if not self.speech_data:
-            raise ValueError(f"No speech files found for {'eval' if is_eval else 'train'} in DB.")
+            raise ValueError(f"No speech files found for {split} in DB.")
 
         # RIR 캐시 관리 설정 (메모리 사용량 최적화용)
         self.max_sources_supported = 8
@@ -121,7 +121,7 @@ class SpatialMixingDataset(Dataset):
                 return waveform
             except Exception as e:
                 print(f"Error: .npy 로드 실패 {path}: {e}")
-                return torch.zeros(num_frames if num_frames > 0 else 16000)
+                return torch.zeros(num_frames if num_frames > 0 else self.target_sr)
 
         # Case 2: 일반 오디오 포맷 (WAV 등, fallback용)
         try:
@@ -138,13 +138,19 @@ class SpatialMixingDataset(Dataset):
                 waveform = waveform.squeeze(0)
 
             if sr != self.target_sr:
-                pass
+                # Calculate new number of frames if num_frames was specified
+                resampled_num_frames = -1
+                if num_frames != -1:
+                    resampled_num_frames = int(num_frames * self.target_sr / sr)
+                
+                # Reload or resample? Since we already loaded, let's resample
+                waveform = torchaudio.functional.resample(waveform, sr, self.target_sr)
                 
             return waveform
         except Exception as e:
             # Fallback for corrupted files or torchcodec bugs
             print(f"Warning: Failed to load {path}: {e}. Returning zeros.")
-            total_frames = num_frames if num_frames > 0 else 16000
+            total_frames = num_frames if num_frames > 0 else self.target_sr
             return torch.zeros(total_frames)
 
     def _get_noise_long_enough(self, target_samples: int):
@@ -232,7 +238,7 @@ class SpatialMixingDataset(Dataset):
 # --- Quick Test Logic ---
 if __name__ == "__main__":
     db_path = "data/metadata.db"
-    dataset = SpatialMixingDataset(db_path, is_eval=False)
+    dataset = SpatialMixingDataset(db_path, split="train")
     print(f"Dataset length: {len(dataset)}")
     
     sample = dataset[0]

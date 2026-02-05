@@ -242,6 +242,7 @@ class RIRGenerator:
                 "room_config": asdict(self.room_config), 
                 "mic_config": asdict(self.mic_config),
                 "mic_pos": self.mic_pos, # 검증용 절대 위치
+                "rir_len_sec": self.rir_len_sec, # RIR 길이 저장
                 "rir_gain": global_peak,  # 원본 복원용 gain 저장
             },
             "source_info": self.source_info,

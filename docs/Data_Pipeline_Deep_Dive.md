@@ -53,10 +53,17 @@
 #### 📝 참고: 3초보다 짧은 파일은 어떻게 되나요? (Zero Padding)
 데이터셋에 3초(48,000 샘플)보다 짧은 음원이 있어도 버리지 않고 사용합니다. 부족한 뒷부분은 **침묵(0)**으로 채워 넣는데, 이를 **제로 패딩(Zero Padding)**이라고 부릅니다. 반대로 3초보다 긴 파일은 랜덤한 구간을 3초만큼만 잘라서(Crop) 사용합니다.
 
+#### 📊 메타데이터 정책 (Metadata & Split)
+*   **8:1:1 분할**: 모든 데이터는 Train(80%), Val(10%), Test(10%)로 엄격히 분할되어 관리됩니다.
+*   **유연한 스키마**:
+    *   `Speech`: 화자(Speaker), 언어(Language) 정보 포함.
+    *   `Noise`: 한국어 이름의 카테고리/서브카테고리 분류.
+    *   `RIR`: 데이터셋 이름(`dataset_name`)과 샘플 레이트 명시.
+
 > **💡 결과물 (하나의 샘플):**
-> *   `raw_speech`: `(48000,)`
-> *   `raw_noises`: `(7, 48000)` (소스가 8개일 때)
-> *   `rir_tensor`: `(5, 8, 16000)`
+> *   `raw_speech`: `(48000,)` (Metadata: `speaker`, `language`)
+> *   `raw_noises`: `(7, 48000)` (Metadata: `category`, `sub_category`)
+> *   `rir_tensor`: `(5, 8, 16000)` (Metadata: `dataset_name`, `split`)
 
 ---
 
@@ -116,8 +123,9 @@ GPU 합성 과정을 거쳐 모델에 `forward()`로 들어가는 최종 데이�
     *   3초 길이의 파형
 
 2.  **정답 (Clean Target):** `(16, 5, 48000)`
-    *   잡음이 섞이기 전, "공간감만 입혀진 목소리"입니다.
-    *   모델은 Noisy를 받아서 이 Clean Target을 맞추도록 학습합니다.
+    *   **옵션 A (`spatialized`):** 잡음이 섞이기 전, "공간감(잔향)만 입혀진 목소리"입니다. (Denoising Task)
+    *   **옵션 B (`aligned_dry`):** 잔향을 제거한 "완전 깨끗한 원본"에, RIR의 도달 시간만큼 **시간 정렬(Alignment)**만 수행한 신호입니다. (Dereverberation Task)
+    *   모델은 Noisy를 받아서 이 Target을 맞추도록 학습합니다.
 
 ---
 

@@ -4,7 +4,18 @@ import lightning as L
 from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import default_collate
 import torch.nn.functional as F
+import numpy as np
+import random
 from .dataset import SpatialMixingDataset
+
+def worker_init_fn(worker_id):
+    """
+    DataLoader 워커별로 고유한 시드를 설정하여 
+    멀티프로세싱 환경에서 난수 생성이 중복되는 것을 방지합니다.
+    """
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 def collate_gpu_synthesis(batch):
     """
@@ -44,19 +55,27 @@ class SEDataModule(L.LightningDataModule):
         self.snr_range = snr_range
 
     def setup(self, stage: str = None):
-        # Assign Train/Val datasets for use in dataloaders
+        # Assign Train/Val/Test datasets for use in dataloaders
         if stage == "fit" or stage is None:
             self.train_dataset = SpatialMixingDataset(
                 db_path=self.db_path,
                 target_sr=self.target_sr,
-                is_eval=False,
+                split="train",
                 snr_range=self.snr_range
             )
             
             self.val_dataset = SpatialMixingDataset(
                 db_path=self.db_path,
                 target_sr=self.target_sr,
-                is_eval=True, # Will load from 'eval' set
+                split="val",
+                snr_range=self.snr_range
+            )
+
+        if stage == "test" or stage is None:
+            self.test_dataset = SpatialMixingDataset(
+                db_path=self.db_path,
+                target_sr=self.target_sr,
+                split="test",
                 snr_range=self.snr_range
             )
 
@@ -68,6 +87,7 @@ class SEDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_gpu_synthesis,
+            worker_init_fn=worker_init_fn,
             persistent_workers=True if self.num_workers > 0 else False
         )
 
@@ -79,5 +99,18 @@ class SEDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_gpu_synthesis,
+            worker_init_fn=worker_init_fn,
+            persistent_workers=True if self.num_workers > 0 else False
+        )
+
+    def test_dataloader(self):
+        return DataLoader(
+            self.test_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=False, 
+            num_workers=self.num_workers,
+            pin_memory=True,
+            collate_fn=collate_gpu_synthesis,
+            worker_init_fn=worker_init_fn,
             persistent_workers=True if self.num_workers > 0 else False
         )

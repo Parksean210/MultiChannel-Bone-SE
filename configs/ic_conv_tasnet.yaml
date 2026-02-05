@@ -1,0 +1,65 @@
+# lightning.pytorch==2.0.0
+seed_everything: 42
+
+data:
+  class_path: src.data.SEDataModule
+  init_args:
+    db_path: "data/metadata.db"
+    batch_size: 4  # Now possible with Gradient Checkpointing
+    num_workers: 8
+    target_sr: 16000
+
+model:
+  class_path: src.modules.se_module.SEModule
+  init_args:
+    target_type: "aligned_dry" # Dereverberation
+    sample_rate: 16000
+    num_val_samples_to_log: 4
+    # 1. Define the IC-Conv-TasNet Model
+    model:
+      class_path: src.models.ICConvTasNet
+      init_args:
+        in_channels: 5
+        out_channels_tcn: 64
+        enc_kernel: 256
+        enc_num_feats: 512
+        bot_num_feats: 128
+        tcn_hidden: 256
+        num_layers: 8
+        num_stacks: 3
+        kernel_size: 3
+        use_checkpoint: true # 로컬(RTX 3080 10GB) 환경에서는 True 권장. 슈퍼컴(A100/H100)에서는 False로 변경 요망.
+
+    # 2. Define the Loss Function (Menu Selection)
+    loss:
+      class_path: src.modules.losses.CompositeLoss
+      init_args:
+        alpha: 0.1 # Weight for Frequency Loss
+
+    # 3. Optimization Settings
+    optimizer_config:
+      lr: 1e-3
+      weight_decay: 1e-5
+
+trainer:
+  max_epochs: 50
+  accelerator: "gpu"
+  devices: 1
+  precision: "16-mixed"
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 1
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "IC-Conv-TasNet_Training"
+      tracking_uri: "file:./mlruns"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_loss"
+        mode: "min"
+        save_top_k: 1
+        filename: "best-model-{epoch:02d}-{val_loss:.2f}"
+    - class_path: lightning.pytorch.callbacks.DeviceStatsMonitor
+      init_args:
+        cpu_stats: true

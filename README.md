@@ -82,22 +82,29 @@ uv sync
 
 ```bash
 # 통합 DB 관리 도구 사용 (음성, 소음, RIR 순차 등록)
-uv run python scripts/manage_db.py speech --path data/raw/speech/train --dataset KsponSpeech
-uv run python scripts/manage_db.py noise --path data/raw/noise/train --category urban
-uv run python scripts/manage_db.py rir --path data/rirs
+uv run python3 scripts/manage_db.py speech --path data/raw/speech/KsponSpeech --dataset KsponSpeech --language "ko"
+uv run python3 scripts/manage_db.py noise --path data/raw/noise/traffic --dataset "TrafficNoise" --category "교통수단"
+uv run python3 scripts/manage_db.py rir --path data/rirs --dataset "SimRIR_v1"
 
-# RIR 시뮬레이션 생성
-uv run python scripts/generate_rir_bank.py --count 1000
+# 8:1:1 데이터 분할 자동 실행
+uv run python3 scripts/manage_db.py realloc --type speech
+uv run python3 scripts/manage_db.py realloc --type noise
 
-# 시뮬레이션 결과 시각화 검증
-uv run python scripts/visualize_rirs.py data/rirs/rir_00000.pkl
+# (Optional) 모든 인덱싱 과정을 한 번에 수행하는 자동화 스크립트
+uv run python3 scripts/final_indexing_v2.py
 ```
 
-### 3. 모델 학습 (Training - In Progress)
-`main.py`를 통해 학습을 실행합니다 (현재 Lightning Module 구현 진행 중).
+상세한 데이터베이스 관리 방법은 [Database_Management_Guide.md](docs/Database_Management_Guide.md)를 참고하세요.
+
+### 3. 모델 학습 및 검증 (Training & Verification)
+학습 파이프라인 구축 및 검증이 완료되었습니다. `generate_samples.py`를 통해 합성 결과를 미리 확인할 수 있습니다.
+
 ```bash
-# (예정/WIP) 
-# uv run python main.py fit --config configs/baseline.yaml
+# 합성 샘플 생성 (CPU 검증용)
+uv run python3 scripts/generate_samples.py --num 10 --split val
+
+# 모델 학습 실행 (LightningCLI)
+uv run python3 main.py fit --config configs/ic_conv_tasnet.yaml
 ```
 
 ### 4. 실험 분석 (Tracking)

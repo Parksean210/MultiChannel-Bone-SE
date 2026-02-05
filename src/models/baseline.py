@@ -9,11 +9,10 @@ class DummyModel(BaseSEModel):
     Use this to test if the Training Engine (Data, Loss, Logging) is working correctly.
     """
     def __init__(self, 
-                 fs: int = 16000, 
                  n_fft: int = 512, 
                  hop_length: int = 256, 
                  window_type: str = "hann"):
-        super().__init__(fs, n_fft, hop_length, n_fft, window_type)
+        super().__init__(n_fft, hop_length, n_fft, window_type)
         # A dummy learnable parameter to satisfy optimizers
         self.dummy_param = nn.Parameter(torch.tensor(0.0))
 

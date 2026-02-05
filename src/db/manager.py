@@ -19,14 +19,16 @@ class DatabaseManager:
         """
         self.engine = engine
 
-    def index_speech(self, root_dir: str, dataset_name: str, is_eval: bool = False, sample_rate: int = 16000):
+    def index_speech(self, root_dir: str, dataset_name: str, speaker: Optional[str] = None, language: str = "ko", split: str = "train", sample_rate: int = 16000):
         """
         입력 디렉토리를 스캔하여 음성 파일(WAV, NPY)의 메타데이터를 DB에 인덱싱합니다.
         
         Args:
             root_dir: 음성 데이터 최상위 디렉토리
             dataset_name: 데이터셋 식별 명칭 (예: 'LibriSpeech')
-            is_eval: 평가용 데이터셋 여부
+            speaker: 화자 식별자 (None인 경우 폴더이름 사용)
+            language: 언어 (ko, en 등)
+            split: 데이터 분할 종류 ('train', 'val', 'test')
             sample_rate: .npy 파일의 실제 샘플 레이트 (길이 계산용)
         """
         root_dir = Path(root_dir)
@@ -34,7 +36,7 @@ class DatabaseManager:
             print(f"Error: Directory {root_dir} does not exist.")
             return
 
-        print(f"Indexing speech from {root_dir} (Dataset: {dataset_name}, SR: {sample_rate})...")
+        print(f"Indexing speech from {root_dir} (Dataset: {dataset_name}, Split: {split}, Lang: {language})...")
         files = list(root_dir.rglob("*.wav")) + list(root_dir.rglob("*.npy"))
         
         with Session(self.engine) as session:
@@ -42,21 +44,21 @@ class DatabaseManager:
             for p in tqdm(files, desc="Indexing Speech"):
                 path_str = str(p.absolute())
                 
-                # Double-check duplicates
                 if session.exec(select(SpeechFile).where(SpeechFile.path == path_str)).first():
                     continue
 
                 try:
                     duration, actual_sr = self._get_audio_info(p, sample_rate)
-                    speaker_id = p.parent.name 
+                    final_speaker = speaker if speaker else p.parent.name
                     
                     speech = SpeechFile(
                         path=path_str,
                         dataset_name=dataset_name,
-                        speaker_id=speaker_id,
+                        speaker=final_speaker,
+                        language=language,
                         duration_sec=duration,
                         sample_rate=actual_sr,
-                        is_eval=is_eval
+                        split=split
                     )
                     new_entries.append(speech)
                 except Exception as e:
@@ -64,23 +66,25 @@ class DatabaseManager:
 
             self._commit_batches(session, new_entries)
 
-    def index_noise(self, root_dir: str, category: str, sub_category: Optional[str] = None, sub_depth: int = 1, sample_rate: int = 16000):
+    def index_noise(self, root_dir: str, dataset_name: str, category: Optional[str] = None, sub_category: Optional[str] = None, sub_depth: int = 1, sample_rate: int = 16000, split: str = "train"):
         """
-        잡음 데이터를 데이터베이스에 인덱싱합니다. 디렉토리 구조로부터 하위 카테고리를 자동으로 추출할 수 있습니다.
+        잡음 데이터를 데이터베이스에 인덱싱합니다.
         
         Args:
             root_dir: 잡음 데이터 최상위 디렉토리
-            category: 대분류 (예: 'urban', 'living' 등)
-            sub_category: 소분류 명칭 (None인 경우 디렉토리명에서 추출)
-            sub_depth: 소분류 추출을 위한 디렉토리 계층 깊이
+            dataset_name: 데이터셋 명칭
+            category: 대분류 (None인 경우 폴더명 자동 파싱 시도)
+            sub_category: 소분류 명칭 (None인 경우 폴더명 자동 파싱 시도)
+            sub_depth: 자동 파싱 시 소분류 추출을 위한 디렉토리 계층 깊이
             sample_rate: .npy 파일의 샘플 레이트
+            split: 데이터 분할 종류 ('train', 'val', 'test')
         """
         root_dir = Path(root_dir)
         if not root_dir.exists():
             print(f"Error: Directory {root_dir} does not exist.")
             return
 
-        print(f"Indexing noise from {root_dir} (Category: {category}, Sub: {sub_category or f'Depth={sub_depth}'}, SR: {sample_rate})...")
+        print(f"Indexing noise from {root_dir} (Dataset: {dataset_name}, Split: {split})...")
         files = list(root_dir.rglob("*.wav")) + list(root_dir.rglob("*.npy"))
 
         with Session(self.engine) as session:
@@ -94,22 +98,32 @@ class DatabaseManager:
                 try:
                     duration, actual_sr = self._get_audio_info(p, sample_rate)
                     
-                    # Flexible Sub-category Logic
-                    if sub_category:
-                        final_sub = sub_category
+                    # Manual labels have priority
+                    if category and sub_category:
+                        final_cat, final_sub = category, sub_category
                     else:
-                        # Go up sub_depth levels
-                        try:
-                            final_sub = p.parents[sub_depth - 1].name
-                        except (IndexError, AttributeError):
-                            final_sub = "unknown"
+                        folder_name = p.parents[sub_depth - 1].name
+                        # Handle TS_/VS_ prefix pattern as fallback
+                        if (folder_name.startswith("VS_") or folder_name.startswith("TS_")) and "_" in folder_name:
+                            parts = folder_name.split("_")
+                            if len(parts) >= 3:
+                                final_cat = parts[1].split(".")[-1] if "." in parts[1] else parts[1]
+                                final_sub = parts[2].split(".")[-1] if "." in parts[2] else parts[2]
+                            else:
+                                final_cat = category or folder_name
+                                final_sub = sub_category or "unknown"
+                        else:
+                            final_cat = category or folder_name
+                            final_sub = sub_category or "unknown"
                     
                     noise = NoiseFile(
                         path=path_str,
-                        category=category,
+                        dataset_name=dataset_name,
+                        category=final_cat,
                         sub_category=final_sub,
                         duration_sec=duration,
-                        sample_rate=actual_sr
+                        sample_rate=actual_sr,
+                        split=split
                     )
                     new_entries.append(noise)
                 except Exception as e:
@@ -117,15 +131,75 @@ class DatabaseManager:
 
             self._commit_batches(session, new_entries)
 
-    def index_rirs(self, root_dir: str):
+    def reallocate_splits(self, table_type: str, ratios: tuple = (0.8, 0.1, 0.1)):
+        """
+        데이터베이스에 이미 등록된 파일들을 지정된 비율(Train:Val:Test)로 무작위 재배치합니다.
+        
+        Args:
+            table_type: 'speech' 또는 'noise'
+            ratios: (Train, Val, Test) 비율 합이 1.0이어야 함
+        """
+        assert sum(ratios) == 1.0, "Ratios must sum to 1.0"
+        
+        if table_type == 'speech':
+            model = SpeechFile
+        elif table_type == 'noise':
+            model = NoiseFile
+        elif table_type == 'rir':
+            model = RIRFile
+        else:
+            raise ValueError(f"Unknown table_type: {table_type}")
+        print(f"Reallocating {table_type} splits with ratios {ratios}...")
+        
+        from sqlmodel import func
+        with Session(self.engine) as session:
+            # 1. 고정 분할 정책: 이미 val, test인 데이터는 건드리지 않고 train인 데이터만 대상으로 재배치
+            # 이를 통해 데이터 추가 시 기존 검증/테스트 데이터셋의 오염(Leakage)을 방지함
+            total_count = session.exec(select(func.count(model.id))).one()
+            
+            # 현재 train 상태인 아이템들만 가져옴
+            train_items = session.exec(select(model).where(model.split == "train")).all()
+            np.random.shuffle(train_items)
+
+            # 목표 수량 계산 (전체 데이터 대비 비율)
+            target_val_total = int(total_count * ratios[1])
+            target_test_total = int(total_count * ratios[2])
+
+            # 이미 할당된 수량 확인
+            current_val_count = session.exec(select(func.count(model.id)).where(model.split == "val")).one()
+            current_test_count = session.exec(select(func.count(model.id)).where(model.split == "test")).one()
+
+            # 새로 추가할 수량
+            needed_val = max(0, target_val_total - current_val_count)
+            needed_test = max(0, target_test_total - current_test_count)
+
+            print(f"Current split: val={current_val_count}, test={current_test_count} (Total items in DB: {total_count})")
+            print(f"Targeting total: val={target_val_total}, test={target_test_total}")
+            print(f"Moving {needed_val} items to val, {needed_test} items to test from current train set...")
+
+            # 순서대로 할당
+            for i, item in enumerate(train_items):
+                if i < needed_val:
+                    item.split = "val"
+                elif i < needed_val + needed_test:
+                    item.split = "test"
+                else:
+                    break
+                session.add(item)
+            
+            session.commit()
+            print(f"Successfully reallocated {table_type} splits. (val: +{needed_val}, test: +{needed_test})")
+
+    def index_rirs(self, root_dir: str, dataset_name: str = "unknown", split: str = "train", sample_rate: int = 16000):
         """
         RIR 데이터(.pkl 또는 .wav)를 스캔하여 메타데이터를 인덱싱합니다.
         """
         root_dir = Path(root_dir)
         if not root_dir.exists():
+            print(f"Error: Directory {root_dir} does not exist.")
             return
 
-        print(f"Indexing RIRs from {root_dir}...")
+        print(f"Indexing RIRs from {root_dir} (Dataset: {dataset_name}, Split: {split}, SR: {sample_rate})...")
         files = list(root_dir.rglob("*.pkl")) + list(root_dir.rglob("*.wav"))
 
         with Session(self.engine) as session:
@@ -137,6 +211,10 @@ class DatabaseManager:
 
                 try:
                     rir = self._parse_rir(p)
+                    # Override with explicit metadata
+                    rir.dataset_name = dataset_name
+                    rir.split = split
+                    rir.sample_rate = sample_rate
                     new_entries.append(rir)
                 except Exception as e:
                     print(f"Warning: Failed to process {p}: {e}")
@@ -163,6 +241,7 @@ class DatabaseManager:
                 },
                 "rir": {
                     "total": session.exec(select(func.count(RIRFile.id))).one(),
+                    "duration_stats": [dict(duration=row[0], count=row[1]) for row in session.exec(select(RIRFile.duration_sec, func.count(RIRFile.id)).group_by(RIRFile.duration_sec)).all()],
                     "types": [dict(name=row[0], count=row[1]) for row in session.exec(select(RIRFile.room_type, func.count(RIRFile.id)).group_by(RIRFile.room_type)).all()]
                 }
             }
@@ -231,7 +310,7 @@ class DatabaseManager:
         """
         RIR 파일(.pkl 또는 .wav)을 파싱하여 RIRFile 모델 객체를 생성합니다.
         """
-        room_type = "unknown"; num_noise = 0; num_mic = 4; num_bcm = 1; rt60 = None
+        room_type = "unknown"; num_noise = 0; num_mic = 4; num_bcm = 1; rt60 = None; duration_sec = 1.0
         if p.suffix == '.pkl':
             import pickle
             with open(p, 'rb') as f: data = pickle.load(f)
@@ -241,11 +320,24 @@ class DatabaseManager:
             num_bcm = 1 if meta.get('mic_config', {}).get('use_bcm', False) else 0
             num_noise = sum(1 for s in data.get('source_info', []) if s['type'] == 'noise')
             rt60 = meta.get('rt60')
+            # Extract duration if exists, otherwise fallback to RIR tensor length
+            duration_sec = meta.get('rir_len_sec')
+            if duration_sec is None and data.get('rirs'):
+                duration_sec = len(data['rirs'][0][0]) / meta.get('fs', 16000)
         else:
             parts = p.stem.split('_')
             room_type = parts[1] if len(parts) >= 2 else "unknown"
             for part in parts:
                 if part.startswith("rt"): rt60 = float(part[2:])
                 if part.startswith("n") and part[1:].isdigit(): num_noise = int(part[1:])
+                if part.startswith("len"): duration_sec = float(part[3:])
         
-        return RIRFile(path=str(p.absolute()), room_type=room_type, num_noise=num_noise, num_mic=num_mic, num_bcm=num_bcm, rt60=rt60)
+        return RIRFile(
+            path=str(p.absolute()), 
+            room_type=room_type, 
+            num_noise=num_noise, 
+            num_mic=num_mic, 
+            num_bcm=num_bcm, 
+            rt60=rt60,
+            duration_sec=duration_sec or 1.0
+        )

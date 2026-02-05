@@ -12,21 +12,18 @@ class BaseSEModel(nn.Module):
     2. 입출력 규격 표준화: Raw Waveform 입력을 받아 처리 후 다시 Waveform으로 복원하는 인터페이스를 정의합니다.
     """
     def __init__(self, 
-                 fs: int = 16000, 
                  n_fft: int = 512, 
                  hop_length: int = 256, 
                  win_length: Optional[int] = 512,
                  window_type: str = "hann"): 
         """
         Args:
-            fs: 샘플 레이트 (Sampling Rate)
             n_fft: FFT 포인트 크기
             hop_length: 프레임 간 이동 간격
             win_length: 프레임 윈도우 길이
             window_type: 사용할 윈도우 함수 유형 ("hann", "hamming", "rect")
         """
         super().__init__()
-        self.fs = fs
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.win_length = win_length if win_length else n_fft

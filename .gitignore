@@ -39,8 +39,10 @@ data/**
 mlruns/**
 !mlruns/
 !mlruns/.gitkeep
+mlflow.db            # MLflow SQLite backend
 logs/               # Lightning 로그 및 체크포인트
 lightning_logs/     # Lightning 기본 로그 폴더
+checkpoints/        # 모델 체크포인트 저장 폴더
 
 # 모델 가중치 파일 (수백 MB ~ 수 GB)
 *.ckpt
