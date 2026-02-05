@@ -7,6 +7,7 @@ class SpeechFile(SQLModel, table=True):
     dataset_name: str = Field(index=True)
     speaker_id: Optional[str] = Field(default=None, index=True)
     duration_sec: float
+    sample_rate: int = Field(default=16000, index=True)
     is_eval: bool = Field(default=False, index=True)
 
 class NoiseFile(SQLModel, table=True):
@@ -15,6 +16,7 @@ class NoiseFile(SQLModel, table=True):
     category: str = Field(index=True)  # urban, living, etc.
     sub_category: Optional[str] = Field(default=None, index=True) # traffic, construction, etc.
     duration_sec: float
+    sample_rate: int = Field(default=16000, index=True)
 
 class RIRFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

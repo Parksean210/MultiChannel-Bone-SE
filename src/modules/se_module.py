@@ -47,7 +47,8 @@ class SEModule(L.LightningModule):
         loss = self.loss(est_clean, clean)
         
         # Log
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        batch_size = noisy.shape[0]
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
         return loss
 
     def _apply_gpu_synthesis(self, batch):
@@ -145,7 +146,8 @@ class SEModule(L.LightningModule):
         loss = self.loss(est_clean, clean)
         
         # Log validation loss
-        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        batch_size = noisy.shape[0]
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
         
         # Log Audio Samples (Only for the first batch of the epoch)
         if batch_idx == 0:
