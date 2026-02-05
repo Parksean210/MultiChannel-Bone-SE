@@ -9,15 +9,25 @@ from src.data.models import SpeechFile, NoiseFile, RIRFile
 
 class DatabaseManager:
     """
-    Unified Database API for Speech, Noise, and RIR management.
+    고속 학습을 위한 음성, 노이즈, RIR 메타데이터 통합 관리 클래스.
+    SQLite 데이터베이스를 기반으로 인덱싱, 경로 동기화 및 통계 기능을 제공합니다.
     """
     def __init__(self, engine):
+        """
+        Args:
+            engine: SQLModel/SQLAlchemy 데이터베이스 엔진 객체
+        """
         self.engine = engine
 
     def index_speech(self, root_dir: str, dataset_name: str, is_eval: bool = False, sample_rate: int = 16000):
         """
-        Index speech files (WAV or NPY) into the database.
-        Calculates duration automatically.
+        입력 디렉토리를 스캔하여 음성 파일(WAV, NPY)의 메타데이터를 DB에 인덱싱합니다.
+        
+        Args:
+            root_dir: 음성 데이터 최상위 디렉토리
+            dataset_name: 데이터셋 식별 명칭 (예: 'LibriSpeech')
+            is_eval: 평가용 데이터셋 여부
+            sample_rate: .npy 파일의 실제 샘플 레이트 (길이 계산용)
         """
         root_dir = Path(root_dir)
         if not root_dir.exists():
@@ -56,14 +66,14 @@ class DatabaseManager:
 
     def index_noise(self, root_dir: str, category: str, sub_category: Optional[str] = None, sub_depth: int = 1, sample_rate: int = 16000):
         """
-        Index noise files from a directory into the database.
+        잡음 데이터를 데이터베이스에 인덱싱합니다. 디렉토리 구조로부터 하위 카테고리를 자동으로 추출할 수 있습니다.
         
         Args:
-            root_dir: Root directory of noise data.
-            category: Main category (urban, living, etc.)
-            sub_category: Fixed sub-category name. If None, inferred via sub_depth.
-            sub_depth: How many levels up from the file to pick the sub-category name (default: 1).
-            sample_rate: Sample rate (for .npy duration calculation).
+            root_dir: 잡음 데이터 최상위 디렉토리
+            category: 대분류 (예: 'urban', 'living' 등)
+            sub_category: 소분류 명칭 (None인 경우 디렉토리명에서 추출)
+            sub_depth: 소분류 추출을 위한 디렉토리 계층 깊이
+            sample_rate: .npy 파일의 샘플 레이트
         """
         root_dir = Path(root_dir)
         if not root_dir.exists():
@@ -109,7 +119,7 @@ class DatabaseManager:
 
     def index_rirs(self, root_dir: str):
         """
-        Index RIR files (.pkl or .wav) into the database.
+        RIR 데이터(.pkl 또는 .wav)를 스캔하여 메타데이터를 인덱싱합니다.
         """
         root_dir = Path(root_dir)
         if not root_dir.exists():
@@ -135,7 +145,7 @@ class DatabaseManager:
 
     def get_stats(self) -> Dict:
         """
-        Returns a comprehensive summary of the database contents.
+        데이터베이스에 저장된 전체 데이터 현황(데이터셋별, 카테고리별 수량 등)을 요약하여 반환합니다.
         """
         with Session(self.engine) as session:
             stats = {
@@ -160,8 +170,8 @@ class DatabaseManager:
 
     def sync_paths(self):
         """
-        Automatically updates .wav paths to .npy if the original file is missing but .npy exists.
-        Useful after bulk conversion.
+        데이터베이스의 파일 경로를 동기화합니다. 
+        동일 경로에 .wav 대신 .npy 파일이 존재하는 경우 이를 우선적으로 사용하도록 업데이트합니다.
         """
         print("Synchronizing database paths (.wav -> .npy)...")
         with Session(self.engine) as session:
@@ -181,7 +191,10 @@ class DatabaseManager:
                 print("Database is already in sync.")
 
     def _get_audio_info(self, path: Path, sr_hint: int) -> tuple[float, int]:
-        """Returns (duration_sec, sample_rate)"""
+        """
+        오디오 파일의 지속 시간(초)과 샘플 레이트를 추출합니다.
+        .npy 포맷은 메모리 형상 정보를 활용하여 초고속으로 파싱합니다.
+        """
         if path.suffix.lower() == ".wav":
             info = sf.info(path)
             return info.duration, info.samplerate
