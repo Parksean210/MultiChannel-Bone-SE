@@ -8,12 +8,20 @@
 
 우리의 데이터 파이프라인은 속도를 위해 **"가벼운 건 CPU가, 무거운 건 GPU가"** 처리하도록 설계되어 있습니다.
 
-```mermaid
-graph LR
-    A[Disk (.npy)] -->|CPU: 고속 로딩| B(Dataset)
-    B -->|CPU: 배치 묶기| C(DataLoader)
-    C -->|GPU 이동| D{GPU Synthesis}
-    D -->|FFT Convolution| E[최종 학습 데이터]
+```text
+[Disk (.npy)] 
+      │
+      │ (CPU: 고속 로딩)
+      ▼
+  [Dataset]
+      │
+      │ (CPU: 배치 묶기)
+      ▼
+ [DataLoader]
+      │
+      │ (GPU 이동)
+      ▼
+{GPU Synthesis} ─── (FFT Convolution) ───▶ [최종 학습 데이터]
 ```
 
 ---
