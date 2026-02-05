@@ -225,10 +225,18 @@ class SEModule(L.LightningModule):
                         # 2. Save Spectrogram Image Artifact
                         plt.figure(figsize=(10, 4))
                         # Use torchaudio for spectrogram calculation
-                        specgram = torchaudio.transforms.Spectrogram(n_fft=512)(signal)
-                        plt.imshow(torchaudio.functional.amplitude_to_DB(specgram, 1.0, 1e-10, 80.0).numpy(), 
-                                   aspect='auto', origin='lower', cmap='viridis')
+                        n_fft = 512
+                        specgram = torchaudio.transforms.Spectrogram(n_fft=n_fft)(signal)
+                        spec_db = torchaudio.functional.amplitude_to_DB(specgram, 1.0, 1e-10, 80.0).numpy()
+                        
+                        # Map bins to Frequency (0 to fs/2)
+                        f_max = self.sample_rate / 2000.0 # to kHz
+                        plt.imshow(spec_db, aspect='auto', origin='lower', cmap='viridis',
+                                   extent=[0, signal.shape[-1]/self.sample_rate, 0, f_max])
+                        
                         plt.title(f"{name} Spectrogram (Step {self.global_step})")
+                        plt.xlabel("Time (s)")
+                        plt.ylabel("Frequency (kHz)")
                         plt.colorbar(format='%+2.0f dB')
                         plt.tight_layout()
                         

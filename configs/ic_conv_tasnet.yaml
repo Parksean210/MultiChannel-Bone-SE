@@ -47,7 +47,7 @@ trainer:
   devices: 1
   precision: "16-mixed"
   log_every_n_steps: 10
-  check_val_every_n_epoch: 1
+  val_check_interval: 1000
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
@@ -60,6 +60,6 @@ trainer:
         mode: "min"
         save_top_k: 1
         filename: "best-model-{epoch:02d}-{val_loss:.2f}"
-    - class_path: lightning.pytorch.callbacks.DeviceStatsMonitor
+    - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
       init_args:
-        cpu_stats: true
+        device_index: 0
