@@ -91,7 +91,7 @@ uv run python3 scripts/manage_db.py realloc --type speech
 uv run python3 scripts/manage_db.py realloc --type noise
 
 # (Optional) 모든 인덱싱 과정을 한 번에 수행하는 자동화 스크립트
-uv run python3 scripts/final_indexing_v2.py
+uv run python3 scripts/final_indexing.py
 ```
 
 상세한 데이터베이스 관리 방법은 [Database_Management_Guide.md](docs/Database_Management_Guide.md)를 참고하세요.
