@@ -37,7 +37,7 @@ graph TD
 
 #### 1. Audio Loading & Shaping (CPU)
 *   **코드 위치**: `src/data/dataset.py` -> `__getitem__`
-*   **기능**: `soundfile` 또는 `.npy` (mmap)으로 오디오를 읽고, 설정된 `chunk_size`에 맞춰 랜덤 자르기(Crop) 혹은 제로 패딩(Pad)을 수행하여 `(T,)` 형태의 오디오 텐서를 반환합니다.
+*   **기능**: `soundfile`, `torchaudio` 또는 `.npy` (mmap)으로 오디오를 읽고, 설정된 `chunk_size`에 맞춰 랜덤 자르기(Crop) 혹은 제로 패딩(Pad)을 수행하여 `(T,)` 형태의 오디오 텐서를 반환합니다.
 
 #### 2. GPU 기반 실시간 합성 (GPU)
 *   **코드 위치**: `src/modules/se_module.py` -> `_apply_gpu_synthesis`

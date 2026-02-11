@@ -52,11 +52,10 @@
 │   ├── manage_db.py         # 🗄️ 통합 DB 관리 CLI
 │   ├── generate_rir_bank.py  # 🏟️ RIR 대량 시뮬레이션 생성
 │   ├── visualize_rirs.py    # 🎨 RIR 시뮬레이션 결과 시각화
-│   ├── utils/              
-│   │   └── convert_pcm_to_wav.py # 🔄 PCM -> WAV 고속 변환기
 │   └── tests/
 │       └── test_base_model.py    # 🧪 모델 아키텍처 검증 (Perfect Reconstruction)
 │
+├── setup_supercomputer.sh # 🚀 슈퍼컴퓨터(사내망) 환경 설정 스크립트
 ├── docs/               # 📚 상세 문서 (가이드라인)
 │   ├── Database_Management_Guide.md  # DB 상세 관리 및 SQLModel 사용법
 │   ├── RIR_Simulation_Guide.md      # RIR 생성 및 메타데이터 구조 가이드
@@ -72,9 +71,14 @@
 ## 🚀 워크플로우 (Research Workflow)
 
 ### 1. 환경 설정
-`uv`를 사용하여 모든 의존성을 한 번에 동기화합니다.
+일반적인 환경에서는 `uv`를 사용하여 모든 의존성을 동기화합니다.
 ```bash
 uv sync
+```
+
+**슈퍼컴퓨터(사내망) 환경**에서는 다음 명령어를 사용하여 환경을 초기화합니다.
+```bash
+source setup_supercomputer.sh
 ```
 
 ### 2. 데이터 준비 (Preprocessing)

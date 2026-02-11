@@ -10,7 +10,7 @@ from scipy.signal import butter, sosfilt
 from typing import List, Optional
 import torchaudio.functional as F_audio
 import random
-from torchcodec.decoders import AudioDecoder
+# from torchcodec.decoders import AudioDecoder
 
 from src.data.models import SpeechFile, NoiseFile, RIRFile
 from src.db.engine import create_db_engine
@@ -164,9 +164,9 @@ class SpatialMixingDataset(Dataset):
             data = np.load(noise_path, mmap_mode='r')
             num_frames = data.shape[0]
         else:
-            # torchcodec을 사용하여 메타데이터 추출
-            decoder = AudioDecoder(noise_path)
-            num_frames = int(decoder.metadata.duration_seconds * decoder.metadata.sample_rate)
+            # torchaudio.info를 사용하여 메타데이터 추출 (torchcodec 대체)
+            info = torchaudio.info(noise_path)
+            num_frames = info.num_frames
         
         if num_frames > target_samples:
             # 여유 길이가 있는 경우 무작위 구간 추출
