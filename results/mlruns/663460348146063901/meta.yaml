@@ -1,6 +1,0 @@
-artifact_location: file:///home/parksean210/project/speech_enhancement/results/mlruns/663460348146063901
-creation_time: 1771518782109
-experiment_id: '663460348146063901'
-last_update_time: 1771518782109
-lifecycle_stage: active
-name: IC-Conv-TasNet_Training
