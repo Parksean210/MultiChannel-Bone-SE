@@ -42,6 +42,7 @@ model:
       weight_decay: 1e-5
 
 trainer:
+  default_root_dir: "results"
   max_epochs: 50
   accelerator: "gpu"
   devices: "auto"
@@ -54,7 +55,7 @@ trainer:
     init_args:
       experiment_name: "IC-Conv-TasNet_Training"
       run_name: "First_try"
-      tracking_uri: "file:./mlruns"
+      tracking_uri: "file:./results/mlruns"
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:

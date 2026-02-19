@@ -13,7 +13,6 @@ import torchaudio
 from torchmetrics.audio import (
     ScaleInvariantSignalDistortionRatio as SI_SDR,
     SignalDistortionRatio as SDR,
-    DeepNoiseSuppressionMeanOpinionScore as DNSMOS,
 )
 from torchmetrics.audio.stoi import ShortTimeObjectiveIntelligibility as STOI
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality as PESQ
@@ -53,14 +52,15 @@ class SEModule(L.LightningModule):
         self.stoi = STOI(fs=sample_rate)
         # PESQ는 16kHz(wb) 또는 8kHz(nb)만 지원하며 전송 지연 등에 민감함
         self.pesq = PESQ(fs=sample_rate, mode='wb') 
-        self.dnsmos = DNSMOS(fs=sample_rate, personalized=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass calling the underlying model.
         Input: (B, C, T) -> Output: (B, C, T)
         """
-        return self.model(x)
+        # 모델의 입력 채널 수만큼만 슬라이싱하여 전달 (예: 5채널 데이터에서 4채널만 쓰기 등 대응)
+        # .contiguous()를 추가하여 모델 내부의 .view() 연산 시 발생할 수 있는 오류를 방지합니다.
+        return self.model(x[:, :self.model.channel_proj.in_channels, :].contiguous())
 
     def training_step(self, batch, batch_idx):
         """
@@ -217,28 +217,6 @@ class SEModule(L.LightningModule):
             val_pesq = torch.tensor(1.0, device=self.device)
         self.log('val_pesq', val_pesq, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
 
-        # 5. DNSMOS
-        try:
-            # est_clean shape: [B, 1, T] -> [B, T]
-            # torchmetrics DNSMOS returns tensor: [P.808_MOS, SIG, BAK, OVRL]
-            dns_output = self.dnsmos(est_clean[:, 0, :])
-            
-            # If batch, it might be [B, 4]. We want the mean overall.
-            if dns_output.ndim == 2:
-                val_ovrl = dns_output[:, 3].mean()
-                val_sig = dns_output[:, 1].mean()
-                val_bak = dns_output[:, 2].mean()
-            else:
-                val_ovrl = dns_output[3]
-                val_sig = dns_output[1]
-                val_bak = dns_output[2]
-
-            self.log('val_dnsmos_ovrl', val_ovrl, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-            self.log('val_dnsmos_sig', val_sig, on_step=False, on_epoch=True, sync_dist=True, batch_size=batch_size)
-            self.log('val_dnsmos_bak', val_bak, on_step=False, on_epoch=True, sync_dist=True, batch_size=batch_size)
-        except Exception as e:
-            # print(f"DNSMOS Error: {e}")
-            pass
         
         # 에폭의 첫 번째 배치에 대해 오디오 샘플을 시각화/청취용으로 로깅
         if batch_idx == 0:
@@ -274,22 +252,6 @@ class SEModule(L.LightningModule):
         except Exception:
             pesq_val = torch.tensor(1.0, device=self.device) # 최솟값으로 처리
         
-        # 5. DNSMOS
-        try:
-            # torchmetrics DNSMOS returns tensor: [P.808_MOS, SIG, BAK, OVRL]
-            test_dns_output = self.dnsmos(est_clean_0[:, 0, :])
-            if test_dns_output.ndim == 2:
-                dnsmos_ovrl = test_dns_output[:, 3].mean()
-                dnsmos_sig = test_dns_output[:, 1].mean()
-                dnsmos_bak = test_dns_output[:, 2].mean()
-            else:
-                dnsmos_ovrl = test_dns_output[3]
-                dnsmos_sig = test_dns_output[1]
-                dnsmos_bak = test_dns_output[2]
-        except Exception:
-            dnsmos_ovrl = torch.tensor(1.0, device=self.device)
-            dnsmos_sig = torch.tensor(1.0, device=self.device)
-            dnsmos_bak = torch.tensor(1.0, device=self.device)
 
         # 로깅
         batch_size = noisy.shape[0]
@@ -297,18 +259,10 @@ class SEModule(L.LightningModule):
         self.log('test_sdr', sdr_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         self.log('test_stoi', stoi_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         self.log('test_pesq', pesq_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        self.log('test_dnsmos_ovrl', dnsmos_ovrl, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        self.log('test_dnsmos_sig', dnsmos_sig, on_step=False, on_epoch=True, batch_size=batch_size)
-        self.log('test_dnsmos_bak', dnsmos_bak, on_step=False, on_epoch=True, batch_size=batch_size)
-        
-        return {
             "test_si_sdr": si_sdr_val, 
             "test_sdr": sdr_val,
             "test_stoi": stoi_val,
             "test_pesq": pesq_val,
-            "test_dnsmos_ovrl": dnsmos_ovrl,
-            "test_dnsmos_sig": dnsmos_sig,
-            "test_dnsmos_bak": dnsmos_bak
         }
         
     def predict_step(self, batch, batch_idx, dataloader_idx=0):

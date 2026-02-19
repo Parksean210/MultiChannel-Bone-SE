@@ -52,12 +52,14 @@ class SpatialMixingDataset(Dataset):
             if speech_id is not None:
                 stmt = stmt.where(SpeechFile.id == speech_id)
             self.speech_data = session.exec(stmt).all()
+            self.speech_data.sort() # Ensure deterministic order for seeding
             
             # 2. Noise
             stmt = select(NoiseFile.id, NoiseFile.path).where(NoiseFile.split == split)
             if noise_ids is not None:
                 stmt = stmt.where(NoiseFile.id.in_(noise_ids))
             self.noise_data = session.exec(stmt).all()
+            self.noise_data.sort() # Ensure deterministic order for seeding
 
             
             # 3. RIR
@@ -65,6 +67,7 @@ class SpatialMixingDataset(Dataset):
             if rir_id is not None:
                 stmt = stmt.where(RIRFile.id == rir_id)
             self.rir_data = session.exec(stmt).all()
+            self.rir_data.sort() # Ensure deterministic order for seeding
 
             
         if not self.speech_data:

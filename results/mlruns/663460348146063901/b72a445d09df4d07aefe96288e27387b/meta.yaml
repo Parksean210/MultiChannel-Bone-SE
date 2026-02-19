@@ -1,0 +1,14 @@
+artifact_uri: file:///home/parksean210/project/speech_enhancement/results/mlruns/663460348146063901/b72a445d09df4d07aefe96288e27387b/artifacts
+end_time: 1771519262610
+entry_point_name: ''
+experiment_id: '663460348146063901'
+lifecycle_stage: active
+run_id: b72a445d09df4d07aefe96288e27387b
+run_name: Final_Path_Verification
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1771519225998
+status: 3
+tags: []
+user_id: parksean210

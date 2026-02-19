@@ -90,6 +90,18 @@ PYTHONPATH=. uv run main.py predict \
 ```
 *   **저장 경로**: `results/predictions/<모델명>/sid_X_nids_Y_Z...wav`
 
+### 6. 본전도(BCM) 유무 비교 실험
+별도의 코드 수정 없이 설정 파일의 채널 수만 조절하여 실험을 수행합니다.
+```bash
+# 1. Bone 포함 (기존 5채널)
+uv run python main.py fit --config configs/ic_conv_tasnet.yaml --trainer.logger.init_args.run_name "With_Bone"
+
+# 2. Bone 제외 (4채널)
+# --model.model.init_args.in_channels 4만 추가하면 자동으로 BCM 채널이 제외됨
+uv run python main.py fit --config configs/ic_conv_tasnet.yaml --trainer.logger.init_args.run_name "No_Bone" --model.model.init_args.in_channels 4
+```
+*   **재현성**: `seed_everything: 42`와 데이터셋의 ID 정렬 로직이 결합되어, 두 실험은 완벽하게 동일한 데이터 조합과 순서로 진행됩니다.
+
 ### 5. 실험 분석 (Tracking)
 ```bash
 # MLflow UI 백그라운드 실행
@@ -105,15 +117,18 @@ nohup uv run mlflow ui --host 0.0.0.0 --port 5000 > mlflow.log 2>&1 &
 | **SI-SDR** | 음원 분리 및 향상 성능의 핵심 척도 |
 | **PESQ** | 사람의 귀로 느끼는 인지적 음질 점수 (WB) |
 | **STOI** | 음성의 말소리가 얼마나 잘 들리는지 나타내는 명료도 |
-| **DNSMOS** | 신경망 기반 품질 평가 (Overall, Signal, Background) |
 
 ---
 
 ## 📅 최신 변경 사항 (Recent Updates)
 
+- **[2026-02-20]**:
+    - **BCM 비교 실험 지원**: `SEModule`의 `forward` 메서드 수정(자동 슬라이싱)을 통해 설정 변경만으로 BCM 유무 비교가 가능하도록 개선.
+    - **재현성(Determinism) 보장**: DB 조회 데이터의 ID 기반 정렬을 통해 시드 고정 시 실험 간 완벽한 공정성(데이터 일치) 확보.
+    - **출력 경로 구조 최적화**: `default_root_dir`을 활용하여 체크포인트가 MLflow의 Run ID 폴더 내부에 자동으로 깔끔하게 저장되도록 개선 (로그-모델 통합 관리).
 - **[2026-02-19]**:
     - `main.py` 슬림화 및 YAML 중심 설정 리팩토링 (`LightningCLI` 완전 전환).
-    - **DNSMOS** 및 **PESQ/STOI** 실시간 로깅 및 텐서 파싱 로직 완전 통합.
+    - **PESQ/STOI** 실시간 로깅 및 텐서 파싱 로직 완전 통합.
     - **학습 고도화**: `EarlyStopping`(조기 종료) 및 `Adaptive LR`(Plateau 기반 학습률 자동 조절) 도입.
     - 가변 길이 노이즈 ID 배치 처리 안정화 (Padded Tensor 방식).
     - 검증 및 추론 결과 자동 폴더링 및 상세 메타데이터 파일명 규칙 도입.
