@@ -20,37 +20,59 @@ class SpatialMixingDataset(Dataset):
     고속 공간 합성(Spatial Mixing) 학습을 위한 데이터셋 클래스.
     SQLite 기반 메타데이터 조회와 .npy 메모리 맵핑(mmap)을 통한 초고속 데이터 로딩을 지원합니다.
     """
-    def __init__(self, db_path: str, target_sr: int = 16000, split: str = "train", snr_range: tuple = (-5, 20), chunk_size: int = 48000):
+    def __init__(self, db_path: str, target_sr: int = 16000, split: str = "train", 
+                 snr_range: tuple = (-5, 20), chunk_size: int = 48000, 
+                 speech_id: Optional[int] = None, 
+                 noise_ids: Optional[List[int]] = None,
+                 rir_id: Optional[int] = None,
+                 fixed_snr: Optional[float] = None):
         """
         Args:
             db_path: SQLite 메타데이터 데이터베이스 경로
             target_sr: 목표 샘플 레이트 (기본값: 16kHz)
             split: 데이터 분할 종류 ('train', 'val', 'test')
             snr_range: 학습 시 무작위로 적용될 SNR 범위 (dB)
-            chunk_size: 학습용 오디오 샘플 길이 (샘플 수 기준, 48000 = 3초)
+            chunk_size: 학습용 오디오 샘플 길이
+            speech_id: 특정 음성 파일 ID 필터링
+            noise_ids: 특정 노이즈 파일 ID 고를 리스트 (여러 개 지정 가능)
+            rir_id: 특정 RIR 파일 ID 필터링
+            fixed_snr: 고정 SNR 값
         """
         self.engine = create_db_engine(db_path)
         self.target_sr = target_sr
         self.split = split
         self.snr_range = snr_range
         self.chunk_size = chunk_size
+        self.fixed_snr = fixed_snr
 
         # 데이터베이스 커넥션 병목 현상을 방지하기 위해 초기화 시점에 전체 경로를 메모리에 캐싱
         with Session(self.engine) as session:
             # 1. Speech
             stmt = select(SpeechFile.id, SpeechFile.path).where(SpeechFile.split == split)
-            self.speech_data = session.exec(stmt).all() # List of (id, path)
+            if speech_id is not None:
+                stmt = stmt.where(SpeechFile.id == speech_id)
+            self.speech_data = session.exec(stmt).all()
             
             # 2. Noise
             stmt = select(NoiseFile.id, NoiseFile.path).where(NoiseFile.split == split)
-            self.noise_data = session.exec(stmt).all() # List of (id, path)
+            if noise_ids is not None:
+                stmt = stmt.where(NoiseFile.id.in_(noise_ids))
+            self.noise_data = session.exec(stmt).all()
+
             
             # 3. RIR
             stmt = select(RIRFile.id, RIRFile.path).where(RIRFile.split == split)
-            self.rir_data = session.exec(stmt).all() # List of (id, path)
+            if rir_id is not None:
+                stmt = stmt.where(RIRFile.id == rir_id)
+            self.rir_data = session.exec(stmt).all()
+
             
         if not self.speech_data:
-            raise ValueError(f"No speech files found for {split} in DB.")
+            raise ValueError(f"No speech files found for '{split}' in DB (ID filter may be too restrictive).")
+        if not self.noise_data:
+            raise ValueError(f"No noise files found for '{split}' in DB (ID filter may be too restrictive).")
+        if not self.rir_data:
+            raise ValueError(f"No RIR files found for '{split}' in DB (ID filter may be too restrictive).")
 
         # RIR 캐시 관리 설정 (메모리 사용량 최적화용)
         self.max_sources_supported = 8
@@ -172,7 +194,7 @@ class SpatialMixingDataset(Dataset):
             # 여유 길이가 있는 경우 무작위 구간 추출
             max_start = num_frames - target_samples
             start = random.randint(0, max_start)
-            return self._load_audio(noise_path, start_frame=start, num_frames=target_samples)
+            return self._load_audio(noise_path, start_frame=start, num_frames=target_samples), noise_id
         else:
             # If noise is too short, fall back to loading whole and looping (rare for this dataset)
             noise_wav = self._load_audio(noise_path)
@@ -181,7 +203,7 @@ class SpatialMixingDataset(Dataset):
                 extra_id, extra_path = random.choice(self.noise_data)
                 extra_wav = self._load_audio(extra_path)
                 noise_wav = torch.cat([noise_wav, extra_wav], dim=0)
-            return noise_wav[:target_samples]
+            return noise_wav[:target_samples], noise_id
     
     def _apply_rir(self, audio, rirs, target_len): pass # Deprecated for GPU
     def _get_aligned_dry(self, audio, rirs, target_len): pass # Deprecated for GPU
@@ -218,20 +240,33 @@ class SpatialMixingDataset(Dataset):
         
         # 3. 노이즈 원본 수집 (최대 소스 개수만큼 수집하며, GPU에서 합성 수행)
         noise_waveforms = torch.zeros((self.max_sources_supported - 1, target_len), dtype=torch.float32)
+        noise_ids = []
         for s in range(1, min(num_available_sources, self.max_sources_supported)):
-            noise_waveforms[s-1] = self._get_noise_long_enough(target_len)
+            wav, nid = self._get_noise_long_enough(target_len)
+            noise_waveforms[s-1] = wav
+            noise_ids.append(nid)
             
         # 4. Clean mic_config
         clean_mic_config = {k: v for k, v in meta['mic_config'].items() if v is not None}
+            
+        # Noise IDs 패딩 (collate 에러 방지용 고정 길이 텐서)
+        max_noises = self.max_sources_supported - 1
+        padded_nids = torch.full((max_noises,), -1, dtype=torch.long)
+        if noise_ids:
+            actual_nids = torch.tensor(noise_ids, dtype=torch.long)
+            padded_nids[:len(actual_nids)] = actual_nids
             
         return {
             "raw_speech": clean_mono,
             "raw_noises": noise_waveforms,
             "rir_tensor": rir_tensor,
             "num_sources": num_available_sources, 
-            "snr": random.uniform(*self.snr_range),
+            "snr": self.fixed_snr if self.fixed_snr is not None else random.uniform(*self.snr_range),
             "mic_config": clean_mic_config,
-            "rir_id": 0, # Placeholder
+
+            "speech_id": id,
+            "noise_ids": padded_nids, # Padded Tensor
+            "rir_id": rir_id,
             "rir_path": rir_item['path'],
         }
 

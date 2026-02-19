@@ -1,18 +1,15 @@
-import lightning as L
-from lightning.pytorch.cli import LightningCLI
 import mlflow
+from lightning.pytorch.cli import LightningCLI
+from src.modules.se_module import SEModule
+from src.data.datamodule import SEDataModule
+from src.callbacks.audio_prediction_writer import AudioPredictionWriter
 
 def cli_main():
-    """
-    프로젝트의 메인 진입점.
-    """
-    # MLFlow 전용 System Metrics 탭 활성화
-    # 1. 트래킹 서버 경로 설정 (YAML과 일치하게)
-    mlflow.set_tracking_uri("file:./mlruns")
-    # 2. 시스템 메트릭 기능을 전역으로 켬
+    # MLflow 시스템 메트릭 로깅 활성화
     mlflow.enable_system_metrics_logging()
     
-    cli = LightningCLI(
+    # 순수 LightningCLI 사용 (설정은 YAML에서 관리)
+    LightningCLI(
         save_config_callback=None,
     )
 

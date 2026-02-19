@@ -44,14 +44,16 @@ model:
 trainer:
   max_epochs: 50
   accelerator: "gpu"
-  devices: 1
+  devices: "auto"
+  strategy: "ddp_find_unused_parameters_true"
   precision: "16-mixed"
   log_every_n_steps: 10
-  val_check_interval: 1000
+  val_check_interval: 7857
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
       experiment_name: "IC-Conv-TasNet_Training"
+      run_name: "First_try"
       tracking_uri: "file:./mlruns"
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
@@ -63,3 +65,12 @@ trainer:
     - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
       init_args:
         device_index: 0
+    - class_path: src.callbacks.audio_prediction_writer.AudioPredictionWriter
+      init_args:
+        output_dir: "results/predictions"
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"
+        patience: 10
+        mode: "min"
+        verbose: True

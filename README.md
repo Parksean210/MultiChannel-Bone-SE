@@ -16,19 +16,7 @@
 
 ## 🏗️ 시스템 아키텍처 (System Architecture)
 
-이 프로젝트는 **"Less Dependencies, More Reproducibility"** 철학을 바탕으로 설계되었습니다. 복잡한 의존성을 제거하고, 각 도구의 본질적인 기능에 집중합니다.
-
-### 🛠️ Tech Stack
-- **Environment**: `uv` (Rust 기반의 초고속 Python 패키지 매니저)
-- **Framework**: `PyTorch Lightning` (학습 루프 및 시스템 구조화) + `LightningCLI` (설정 자동화)
-- **Tracking**: `MLflow` (실험 결과 및 아티팩트 자동 기록)
-- **Data Management**: `SQLModel` + `SQLite` (가볍고 강력한 로컬 메타데이터 관리)
-
----
-
 ### 📂 폴더 구조 (Directory Structure)
-
-프로젝트는 **시스템(설정)**, **데이터**, **코드(모델/로직)**가 명확히 분리된 구조를 따릅니다.
 
 ```text
 /
@@ -36,30 +24,29 @@
 ├── data/               # 💾 데이터 저장소
 │   ├── raw/            # 원본 데이터 (Speech, Noise)
 │   ├── rirs/           # 시뮬레이션된 Room Impulse Responses (.pkl)
-│   ├── samples/        # 합성 로직 검증용 오디오 샘플
-│   ├── outputs/        # 딥러닝 모델 출력물 (Validation/Test 결과)
 │   └── metadata.db     # SQLite 데이터베이스 (인덱싱된 메타데이터)
 │
 ├── src/                # 💻 소스 코드
-│   ├── models/         # [Pure PyTorch] 모델 아키텍처 (BaseSEModel 등)
-│   ├── modules/        # [Lightning] 학습 로직 및 시스템
-│   ├── data/           # [Lightning] 데이터 파이프라인 (Dataset, DataLoader)
-│   ├── db/             # DB 관리 코드 (SQLModel 스키마 및 Manager)
-│   └── simulation/     # 음향 시머니레이션 (RIR 생성, 믹싱 로직)
+│   ├── models/         # [Pure PyTorch] 모델 아키텍처 (base.py, ic_conv_tasnet.py 등)
+│   ├── modules/        # [Lightning] 학습 루프 및 시스템 (se_module.py, losses.py)
+│   ├── data/           # [Lightning] 데이터 파이프라인 (dataset.py, datamodule.py)
+│   ├── callbacks/      # 이벤트 처리 (audio_prediction_writer.py, gpu_stats_monitor.py)
+│   ├── db/             # DB 관리 (manager.py, engine.py)
+│   └── simulation/     # 가상 음향 시뮬레이션 (generator.py, config.py)
 │
-├── mlruns/             # 📊 MLflow 실험 데이터 (로컬 파일시스템)
-├── scripts/            # 📜 유틸리티 스크립트
-│   ├── manage_db.py         # 🗄️ 통합 DB 관리 CLI
-│   ├── generate_rir_bank.py  # 🏟️ RIR 대량 시뮬레이션 생성
-│   ├── visualize_rirs.py    # 🎨 RIR 시뮬레이션 결과 시각화
-│   └── tests/
-│       └── test_base_model.py    # 🧪 모델 아키텍처 검증 (Perfect Reconstruction)
+├── results/            # 🎧 실험 결과물
+│   └── predictions/    # 모델별/샘플별 추론 결과 오디오
+├── mlruns/             # � MLflow 실험 데이터
+├── scripts/            # 📜 유틸리티 스크립트 (manage_db.py, generate_samples.py 등)
 │
 ├── setup_supercomputer.sh # 🚀 슈퍼컴퓨터(사내망) 환경 설정 스크립트
 ├── docs/               # 📚 상세 문서 (가이드라인)
 │   ├── Database_Management_Guide.md  # DB 상세 관리 및 SQLModel 사용법
 │   ├── RIR_Simulation_Guide.md      # RIR 생성 및 메타데이터 구조 가이드
 │   ├── Data_Synthesis_Guide.md      # 온더플라이 데이터 합성 가이드
+│   ├── Data_Pipeline_Deep_Dive.md   # 데이터 흐름 및 텐서 차원 심층 분석
+│   ├── Execution_Configuration_Guide.md # LightningCLI 실행 및 YAML 설정 가이드
+│   ├── MLflow_Guide.md              # MLflow 실험 추적 및 지표 분석 가이드
 │   ├── Base_Model_Architecture_Guide.md # 모델 아키텍처 설계 및 구현 가이드
 │   └── Git_Sync_Guide.md            # 📘 사외/사내 망 Git 동기화 가이드
 ├── main.py             # 🚀 실행 엔트리포인트 (LightningCLI)
@@ -71,56 +58,62 @@
 ## 🚀 워크플로우 (Research Workflow)
 
 ### 1. 환경 설정
-일반적인 환경에서는 `uv`를 사용하여 모든 의존성을 동기화합니다.
+`uv`를 사용하여 모든 의존성을 동기화합니다. 사내망 환경에서는 전용 스크립트를 활용합니다.
 ```bash
 uv sync
-```
-
-**슈퍼컴퓨터(사내망) 환경**에서는 다음 명령어를 사용하여 환경을 초기화합니다.
-```bash
+# 또는
 source setup_supercomputer.sh
 ```
 
 ### 2. 데이터 준비 (Preprocessing)
-원본 데이터를 DB에 등록하고, 고속 학습을 위한 RIR을 생성합니다.
-
 ```bash
-# 통합 DB 관리 도구 사용 (음성, 소음, RIR 순차 등록)
-uv run python3 scripts/manage_db.py speech --path data/raw/speech/KsponSpeech --dataset KsponSpeech --language "ko"
-uv run python3 scripts/manage_db.py noise --path data/raw/noise/traffic --dataset "TrafficNoise" --category "교통수단"
+# DB 등록 및 데이터 분할
+uv run python3 scripts/manage_db.py speech --path data/raw/speech/KsponSpeech --dataset KsponSpeech
+uv run python3 scripts/manage_db.py noise --path data/raw/noise/traffic --dataset "TrafficNoise"
 uv run python3 scripts/manage_db.py rir --path data/rirs --dataset "SimRIR_v1"
-
-# 8:1:1 데이터 분할 자동 실행
 uv run python3 scripts/manage_db.py realloc --type speech
-uv run python3 scripts/manage_db.py realloc --type noise
-
-# (Optional) 모든 인덱싱 과정을 한 번에 수행하는 자동화 스크립트
-uv run python3 scripts/final_indexing.py
 ```
 
-상세한 데이터베이스 관리 방법은 [Database_Management_Guide.md](docs/Database_Management_Guide.md)를 참고하세요.
-
-### 3. 모델 학습 및 검증 (Training & Verification)
-학습 파이프라인 구축 및 검증이 완료되었습니다. `generate_samples.py`를 통해 합성 결과를 미리 확인할 수 있습니다.
-
+### 3. 모델 학습 (Training)
 ```bash
-# 합성 샘플 생성 (CPU 검증용)
-uv run python3 scripts/generate_samples.py --num 10 --split val
-
-# 모델 학습 실행 (LightningCLI)
-uv run python3 main.py fit --config configs/ic_conv_tasnet.yaml
+# 모든 평가지표(DNSMOS 등)가 실시간으로 로깅됨
+PYTHONPATH=. uv run main.py fit --config configs/ic_conv_tasnet.yaml
 ```
 
-### 4. 실험 분석 (Tracking)
-로컬 파일시스템에 기록된 실험 결과를 MLflow UI를 통해 확인합니다.
+### 4. 추론 및 결과 확인 (Inference)
 ```bash
-uv run mlflow ui
+# 특정 조건(ID, SNR)을 필터링하여 추론 실행
+PYTHONPATH=. uv run main.py predict \
+  --config configs/ic_conv_tasnet.yaml \
+  --ckpt_path path/to/model.ckpt \
+  --data.speech_id 3 --data.noise_ids [8,16] --data.fixed_snr 5
+```
+*   **저장 경로**: `results/predictions/<모델명>/sid_X_nids_Y_Z...wav`
+
+### 5. 실험 분석 (Tracking)
+```bash
+# MLflow UI 백그라운드 실행
+nohup uv run mlflow ui --host 0.0.0.0 --port 5000 > mlflow.log 2>&1 &
 ```
 
 ---
 
-## 📊 데이터셋 (Datasets)
+## 📊 평가지표 (Evaluation Metrics)
 
-- **Speech (Target/Reference)**: KsponSpeech (한국어 대화 음성)
-- **Noise (Interference)**: NIA 163-2 극한 소음 데이터 (공사장, 공장, 교통 소음 등)
-- **RIRs (Augmentation)**: 시뮬레이션된 공간 임펄스 응답
+| 지표 | 설명 |
+| :--- | :--- |
+| **SI-SDR** | 음원 분리 및 향상 성능의 핵심 척도 |
+| **PESQ** | 사람의 귀로 느끼는 인지적 음질 점수 (WB) |
+| **STOI** | 음성의 말소리가 얼마나 잘 들리는지 나타내는 명료도 |
+| **DNSMOS** | 신경망 기반 품질 평가 (Overall, Signal, Background) |
+
+---
+
+## 📅 최신 변경 사항 (Recent Updates)
+
+- **[2026-02-19]**:
+    - `main.py` 슬림화 및 YAML 중심 설정 리팩토링 (`LightningCLI` 완전 전환).
+    - **DNSMOS** 및 **PESQ/STOI** 실시간 로깅 및 텐서 파싱 로직 완전 통합.
+    - **학습 고도화**: `EarlyStopping`(조기 종료) 및 `Adaptive LR`(Plateau 기반 학습률 자동 조절) 도입.
+    - 가변 길이 노이즈 ID 배치 처리 안정화 (Padded Tensor 방식).
+    - 검증 및 추론 결과 자동 폴더링 및 상세 메타데이터 파일명 규칙 도입.

@@ -10,6 +10,13 @@ import soundfile as sf
 import matplotlib.pyplot as plt
 import io
 import torchaudio
+from torchmetrics.audio import (
+    ScaleInvariantSignalDistortionRatio as SI_SDR,
+    SignalDistortionRatio as SDR,
+    DeepNoiseSuppressionMeanOpinionScore as DNSMOS,
+)
+from torchmetrics.audio.stoi import ShortTimeObjectiveIntelligibility as STOI
+from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality as PESQ
 
 class SEModule(L.LightningModule):
     """
@@ -39,6 +46,14 @@ class SEModule(L.LightningModule):
         self.target_type = target_type
         self.sample_rate = sample_rate
         self.num_val_samples_to_log = num_val_samples_to_log
+        
+        # Metrics
+        self.si_sdr = SI_SDR()
+        self.sdr = SDR()
+        self.stoi = STOI(fs=sample_rate)
+        # PESQ는 16kHz(wb) 또는 8kHz(nb)만 지원하며 전송 지연 등에 민감함
+        self.pesq = PESQ(fs=sample_rate, mode='wb') 
+        self.dnsmos = DNSMOS(fs=sample_rate, personalized=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -134,14 +149,15 @@ class SEModule(L.LightningModule):
             atten_factor = 10 ** (-atten_db / 20.0)
             noise_mc_total[:, -1] *= atten_factor
 
-        # 4. SNR 스케일링 (에어 채널의 RMS 기준)
-        air_idx = slice(0, M-1) if use_bcm else slice(0, M)
-        clean_rms = torch.sqrt(torch.mean(speech_mc[:, air_idx, :]**2, dim=(1, 2)) + 1e-8)
-        noise_rms = torch.sqrt(torch.mean(noise_mc_total[:, air_idx, :]**2, dim=(1, 2)) + 1e-8)
+        # 4. SNR 스케일링 (0번 참조 채널의 RMS 기준)
+        # 학계 관례에 따라 기준 마이크(0번)에서의 스피치/노이즈 비율을 설정된 SNR로 맞춥니다.
+        clean_rms = torch.sqrt(torch.mean(speech_mc[:, 0, :]**2, dim=-1) + 1e-8)
+        noise_rms = torch.sqrt(torch.mean(noise_mc_total[:, 0, :]**2, dim=-1) + 1e-8)
         
         # 목표 SNR 달성을 위한 노이즈 가중치 산출
         target_factor = (clean_rms / (10**(snr/20))) / (noise_rms + 1e-8)
         noise_mc_total *= target_factor.view(B, 1, 1)
+
 
         # 5. 최종 혼합 (Clean + Scaled Noise)
         noisy_mc = speech_mc + noise_mc_total
@@ -178,16 +194,151 @@ class SEModule(L.LightningModule):
         est_clean = self(noisy)
         loss = self.loss(est_clean[:, 0:1, :], target)
         
-        # 검증 손실 로깅
+        # 검증 손실 및 지표 로깅
         batch_size = noisy.shape[0]
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        
+        # 1. SI-SDR
+        val_si_sdr = self.si_sdr(est_clean[:, 0:1, :], target)
+        self.log('val_si_sdr', val_si_sdr, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
+        # 2. SDR
+        val_sdr = self.sdr(est_clean[:, 0:1, :], target)
+        self.log('val_sdr', val_sdr, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
+        # 3. STOI
+        val_stoi = self.stoi(est_clean[:, 0:1, :], target)
+        self.log('val_stoi', val_stoi, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
+        # 4. PESQ
+        try:
+            val_pesq = self.pesq(est_clean[:, 0:1, :], target)
+        except Exception:
+            val_pesq = torch.tensor(1.0, device=self.device)
+        self.log('val_pesq', val_pesq, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+
+        # 5. DNSMOS
+        try:
+            # est_clean shape: [B, 1, T] -> [B, T]
+            # torchmetrics DNSMOS returns tensor: [P.808_MOS, SIG, BAK, OVRL]
+            dns_output = self.dnsmos(est_clean[:, 0, :])
+            
+            # If batch, it might be [B, 4]. We want the mean overall.
+            if dns_output.ndim == 2:
+                val_ovrl = dns_output[:, 3].mean()
+                val_sig = dns_output[:, 1].mean()
+                val_bak = dns_output[:, 2].mean()
+            else:
+                val_ovrl = dns_output[3]
+                val_sig = dns_output[1]
+                val_bak = dns_output[2]
+
+            self.log('val_dnsmos_ovrl', val_ovrl, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+            self.log('val_dnsmos_sig', val_sig, on_step=False, on_epoch=True, sync_dist=True, batch_size=batch_size)
+            self.log('val_dnsmos_bak', val_bak, on_step=False, on_epoch=True, sync_dist=True, batch_size=batch_size)
+        except Exception as e:
+            # print(f"DNSMOS Error: {e}")
+            pass
         
         # 에폭의 첫 번째 배치에 대해 오디오 샘플을 시각화/청취용으로 로깅
         if batch_idx == 0:
             target_to_log = batch['aligned_dry'] if self.target_type == "aligned_dry" else batch['clean']
-            self.log_audio_samples(noisy, target_to_log, est_clean)
+            self.log_audio_samples(noisy, target_to_log, est_clean, batch=batch)
+
+    def test_step(self, batch, batch_idx):
+        """
+        테스트 단계 루프. SI-SDR 등 정량적 지표를 계산하고 최종 성능을 평가합니다.
+        """
+        batch = self._apply_gpu_synthesis(batch)
+        noisy = batch['noisy']
+        
+        # Target selection (Channel 0 기준, Aligned Dry 권장)
+        target = batch['aligned_dry'][:, 0:1, :]
+        
+        est_clean = self(noisy)
+        est_clean_0 = est_clean[:, 0:1, :]
+        
+        # 1. SI-SDR (Scale-Invariant SDR)
+        si_sdr_val = self.si_sdr(est_clean_0, target)
+        
+        # 2. SDR (Classic BSS-Eval)
+        sdr_val = self.sdr(est_clean_0, target)
+        
+        # 3. STOI (Intelligibility)
+        stoi_val = self.stoi(est_clean_0, target)
+        
+        # 4. PESQ (Quality)
+        # PESQ는 에러 발생 가능성이 있어 안전하게 처리 (예: 너무 짧은 구간 등)
+        try:
+            pesq_val = self.pesq(est_clean_0, target)
+        except Exception:
+            pesq_val = torch.tensor(1.0, device=self.device) # 최솟값으로 처리
+        
+        # 5. DNSMOS
+        try:
+            # torchmetrics DNSMOS returns tensor: [P.808_MOS, SIG, BAK, OVRL]
+            test_dns_output = self.dnsmos(est_clean_0[:, 0, :])
+            if test_dns_output.ndim == 2:
+                dnsmos_ovrl = test_dns_output[:, 3].mean()
+                dnsmos_sig = test_dns_output[:, 1].mean()
+                dnsmos_bak = test_dns_output[:, 2].mean()
+            else:
+                dnsmos_ovrl = test_dns_output[3]
+                dnsmos_sig = test_dns_output[1]
+                dnsmos_bak = test_dns_output[2]
+        except Exception:
+            dnsmos_ovrl = torch.tensor(1.0, device=self.device)
+            dnsmos_sig = torch.tensor(1.0, device=self.device)
+            dnsmos_bak = torch.tensor(1.0, device=self.device)
+
+        # 로깅
+        batch_size = noisy.shape[0]
+        self.log('test_si_sdr', si_sdr_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('test_sdr', sdr_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('test_stoi', stoi_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('test_pesq', pesq_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('test_dnsmos_ovrl', dnsmos_ovrl, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('test_dnsmos_sig', dnsmos_sig, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('test_dnsmos_bak', dnsmos_bak, on_step=False, on_epoch=True, batch_size=batch_size)
+        
+        return {
+            "test_si_sdr": si_sdr_val, 
+            "test_sdr": sdr_val,
+            "test_stoi": stoi_val,
+            "test_pesq": pesq_val,
+            "test_dnsmos_ovrl": dnsmos_ovrl,
+            "test_dnsmos_sig": dnsmos_sig,
+            "test_dnsmos_bak": dnsmos_bak
+        }
+        
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        """
+        추론 단계 루프. 입력 신호에 대해 강화를 수행하고 결과를 반환합니다.
+        """
+        batch = self._apply_gpu_synthesis(batch)
+        noisy = batch['noisy']
+        
+        # Inference
+        est_clean = self(noisy)
+        
+        # Target selection (Channel 0 logic should be handled by writer)
+        if self.target_type == "aligned_dry":
+            target = batch['aligned_dry']
+        else:
+            target = batch['clean']
             
-    def log_audio_samples(self, noisy: torch.Tensor, clean: torch.Tensor, est_clean: torch.Tensor):
+        return {
+            "noisy": noisy,
+            "enhanced": est_clean,
+            "target": target,
+            # Metadata for folder naming
+            "speech_id": batch.get("speech_id"),
+            "noise_ids": batch.get("noise_ids"),
+            "rir_id": batch.get("rir_id"),
+            "snr": batch.get("snr")
+        }
+            
+    def log_audio_samples(self, noisy: torch.Tensor, clean: torch.Tensor, est_clean: torch.Tensor, batch: Optional[Dict] = None):
         """
         추론 결과를 MLflow/Tensorboard에 오디오 형태로 로깅합니다.
         배치 내의 첫 N개 샘플에 대해 원본, 정답(Clean), 추론 결과를 기록합니다.
@@ -213,11 +364,31 @@ class SEModule(L.LightningModule):
             
             run_id = self.logger.run_id
             for i in range(num_samples):
+                # Metadata extraction for filename
+                base_name_info = f"sample_{i}"
+                if batch is not None:
+                    sid = batch["speech_id"][i].item() if "speech_id" in batch else "unknown"
+                    rid = batch["rir_id"][i].item() if "rir_id" in batch else "unknown"
+                    snr = batch["snr"][i].item() if "snr" in batch else 0.0
+                    
+                    # Noise IDs extraction and filtering
+                    nids_raw = batch["noise_ids"][i]
+                    if isinstance(nids_raw, torch.Tensor):
+                        nids_list = nids_raw.tolist()
+                    else:
+                        nids_list = nids_raw if isinstance(nids_raw, list) else [nids_raw]
+                    nids_filtered = [str(int(nid)) for nid in nids_list if nid != -1]
+                    nids_str = "_".join(nids_filtered)
+                    
+                    base_name_info = f"sid_{sid}_nids_{nids_str}_rid_{rid}_snr_{snr:.1f}dB"
+
                 with tempfile.TemporaryDirectory() as tmp_dir:
-                    # Save audio to temporary file
+                    # Save audio and spectrograms to temporary file
                     for name, signal in [("Noisy", noisy[i]), ("Enhanced", est_clean[i]), ("Target", clean[i])]:
                         # 1. Save Audio Artifact
-                        wav_path = os.path.join(tmp_dir, f"{name}_step{self.global_step}.wav")
+                        # Filename: [Type]_[Metadata]_step[Step].wav
+                        wav_name = f"{name}_{base_name_info}_step{self.global_step}.wav"
+                        wav_path = os.path.join(tmp_dir, wav_name)
                         # Explicitly convert to float32 for soundfile support
                         sf.write(wav_path, signal.to(torch.float32).numpy(), self.sample_rate)
                         self.logger.experiment.log_artifact(run_id, wav_path, artifact_path=f"audio_samples/sample_{i}")
@@ -234,13 +405,15 @@ class SEModule(L.LightningModule):
                         plt.imshow(spec_db, aspect='auto', origin='lower', cmap='viridis',
                                    extent=[0, signal.shape[-1]/self.sample_rate, 0, f_max])
                         
-                        plt.title(f"{name} Spectrogram (Step {self.global_step})")
+                        plt.title(f"{name} Spectrogram ({base_name_info}, Step {self.global_step})")
                         plt.xlabel("Time (s)")
                         plt.ylabel("Frequency (kHz)")
                         plt.colorbar(format='%+2.0f dB')
                         plt.tight_layout()
                         
-                        spec_path = os.path.join(tmp_dir, f"{name}_spec_step{self.global_step}.png")
+                        # Filename: [Type]_spec_[Metadata]_step[Step].png
+                        spec_name = f"{name}_spec_{base_name_info}_step{self.global_step}.png"
+                        spec_path = os.path.join(tmp_dir, spec_name)
                         plt.savefig(spec_path)
                         plt.close()
                         self.logger.experiment.log_artifact(run_id, spec_path, artifact_path=f"audio_samples/sample_{i}")

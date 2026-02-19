@@ -6,6 +6,7 @@ from torch.utils.data.dataloader import default_collate
 import torch.nn.functional as F
 import numpy as np
 import random
+from typing import List, Optional
 from .dataset import SpatialMixingDataset
 
 def worker_init_fn(worker_id):
@@ -45,7 +46,11 @@ class SEDataModule(L.LightningDataModule):
                  batch_size: int = 4,
                  num_workers: int = 4,
                  target_sr: int = 16000,
-                 snr_range: tuple = (-5, 20)):
+                 snr_range: tuple = (-5, 20),
+                 speech_id: Optional[int] = None,
+                 noise_ids: Optional[List[int]] = None,
+                 rir_id: Optional[int] = None,
+                 fixed_snr: Optional[float] = None):
         super().__init__()
         self.save_hyperparameters()
         self.db_path = db_path
@@ -53,30 +58,42 @@ class SEDataModule(L.LightningDataModule):
         self.num_workers = num_workers
         self.target_sr = target_sr
         self.snr_range = snr_range
+        self.speech_id = speech_id
+        self.noise_ids = noise_ids
+        self.rir_id = rir_id
+        self.fixed_snr = fixed_snr
+
+
+
 
     def setup(self, stage: str = None):
         # Assign Train/Val/Test datasets for use in dataloaders
+        
         if stage == "fit" or stage is None:
             self.train_dataset = SpatialMixingDataset(
                 db_path=self.db_path,
                 target_sr=self.target_sr,
                 split="train",
-                snr_range=self.snr_range
+                snr_range=self.snr_range,
             )
             
             self.val_dataset = SpatialMixingDataset(
                 db_path=self.db_path,
                 target_sr=self.target_sr,
                 split="val",
-                snr_range=self.snr_range
+                snr_range=self.snr_range,
             )
 
-        if stage == "test" or stage is None:
+        if stage == "test" or stage == "predict" or stage is None:
             self.test_dataset = SpatialMixingDataset(
                 db_path=self.db_path,
                 target_sr=self.target_sr,
                 split="test",
-                snr_range=self.snr_range
+                snr_range=self.snr_range,
+                speech_id=self.speech_id,
+                noise_ids=self.noise_ids,
+                rir_id=self.rir_id,
+                fixed_snr=self.fixed_snr
             )
 
     def train_dataloader(self):
@@ -114,3 +131,6 @@ class SEDataModule(L.LightningDataModule):
             worker_init_fn=worker_init_fn,
             persistent_workers=True if self.num_workers > 0 else False
         )
+
+    def predict_dataloader(self):
+        return self.test_dataloader()

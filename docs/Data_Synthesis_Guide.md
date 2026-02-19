@@ -33,45 +33,25 @@ graph TD
     end
 ```
 
-### 🔍 상세 로직 분석
+### 🔍 상세 로직 분석 (Technical Breakdown)
 
 #### 1. Audio Loading & Shaping (CPU)
 *   **코드 위치**: `src/data/dataset.py` -> `__getitem__`
-*   **기능**: `soundfile`, `torchaudio` 또는 `.npy` (mmap)으로 오디오를 읽고, 설정된 `chunk_size`에 맞춰 랜덤 자르기(Crop) 혹은 제로 패딩(Pad)을 수행하여 `(T,)` 형태의 오디오 텐서를 반환합니다.
+*   **기능**: `soundfile` 또는 `.npy`로 오디오를 로드한 뒤, `chunk_size`(기본 48,000)에 맞춰 랜덤 크롭(Crop) 또는 제로 패딩(Pad)을 수행합니다. 이는 모든 배치의 타임 스텝을 통일하여 GPU 연산 효율을 극대화합니다.
 
-#### 2. GPU 기반 실시간 합성 (GPU)
+#### 2. RIR Application & FFT Convolution (GPU)
+*   **코드 위치**: `src/modules/se_module.py` -> `_apply_rir`
+*   **기술**: `torchaudio.functional.fftconvolve`를 사용합니다. 마이크 개수($M$)와 소스 개수($S$)에 따른 복잡한 컨볼루션을 주파수 도메인에서 한 번에 처리하여, 시간 도메인 연산 대비 수십 배의 성능 향상을 얻습니다.
+
+#### 3. BCM (Bone Conduction) Physics Modeling (GPU)
+*   **코드 위치**: `src/modules/se_module.py` -> `_apply_bcm_modeling`
+*   **물리 정보 반영**:
+    *   **LPF (Low Pass Filter)**: 피부와 근육을 통과하며 고주파가 상실되는 골전도 특성(500Hz~1kHz Cut-off)을 모사합니다.
+    *   **Attenuation**: 외부 공기 전도 소음이 골전도 마이크에 작게 유입되는 차음 성능(약 -20dB)을 반영합니다.
+
+#### 4. Dynamic SNR Scaling & Mixing (GPU)
 *   **코드 위치**: `src/modules/se_module.py` -> `_apply_gpu_synthesis`
-*   **핵심 기술**:
-    *   **FFT Convolution**: `torchaudio.functional.fftconvolve`를 사용하여 Batch 단위의 다채널 컨볼루션을 고속 처리합니다.
-    *   **BCM Modeling**: 마지막 채널에 저대역 통과 필터(LPF) 및 잡음 감쇄(Attenuation)를 적용하여 골전도 센서 특성을 모사합니다.
-    *   **Dynamic Mixing**: 매 배치마다 랜덤하게 설정된 SNR에 맞춰 음성과 소음을 혼합합니다.
-
-### 🔍 상세 로직 분석
-
-#### 1. Audio Loading & Shaping
-*   **코드 위치**: `__getitem__` 초반부
-*   **기능**: `soundfile`로 읽은 오디오를 즉시 텐서로 변환하고, 설정된 `chunk_size`(기본 48,000)에 맞춰 랜덤 자르기(Crop) 혹은 제로 패딩(Pad)을 수행합니다. 이는 GPU 텐서 연산의 효율을 극대화합니다.
-
-#### 2. RIR Application (FFT Convolution)
-*   **코드 위치**: `_apply_rir` 메서드
-*   **핵심 기술**:
-    ```python
-    # (1, T) * (M, R) -> (M, T+R-1) FFT Convolution
-    output = F_audio.fftconvolve(audio, rir_tensor, mode="full")
-    ```
-    마이크 개수($M$)만큼의 컨볼루션을 한 번의 FFT 연산으로 처리하여 속도를 비약적으로 높입니다.
-
-#### 3. BCM (Bone Conduction) Physics
-*   **코드 위치**: `_apply_bcm_modeling` 메서드
-*   **기능**: 마지막 채널(Channel 4)에 골전도 센서의 물리적 특성을 입힙니다.
-    1.  **LPF (Low Pass Filter)**: 500Hz 이하 주파수만 통과 (피부 진동 특성)
-    2.  **Noise High Attenuation**: 외부 소음은 공기 전도 대비 약 20dB 감쇄 (차음 효과)
-
-#### 3. SNR Scaling & Mixing
-*   **코드 위치**: `SEModule.py` -> `_apply_gpu_synthesis`
-*   **로직**:
-    *   에너지 계산 시 **BCM 채널을 제외한** 공기 전도 마이크(Air Mics)만을 기준으로 삼습니다.
-    *   랜덤하게 설정된 `snr_range` (예: -5~20dB)에 맞춰 소음의 진폭을 조절한 뒤 음성과 합칩니다.
+*   **로직**: 믹싱 시 **BCM 채널을 제외한 공기 전도 마이크**의 에너지를 기준으로 SNR을 계산합니다. 설정된 `snr_range` 내에서 랜덤하게 추출된 값으로 노이즈 진폭을 조절하여 최종 `Noisy` 신호를 생성합니다.
 
 ---
 
@@ -82,11 +62,14 @@ graph TD
 | Key | Shape | 설명 및 용도 |
 | :--- | :--- | :--- |
 | `raw_speech` | `(T,)` | 공간감이 입혀지기 전의 깨끗한 음성 (Mono) |
-| `raw_noises` | `(S-1, T)` | 공간감이 입혀지기 전의 노이즈 원본들 |
-| `rir_tensor` | `(M, S, L)` | 마이크별/위치별 공간 임펄스 응답 (RIR) |
-| `num_sources`| `int` | 현재 RIR에서 사용 가능한 실제 소스 개수 |
+| `raw_noises` | `(S_max-1, T)` | 공간감이 입혀지기 전의 노이즈 원본들 |
+| `rir_tensor` | `(M, S_max, L)`| 공간 임펄스 응답 (사용하지 않는 슬롯은 0으로 패딩) |
+| `noise_ids` | `(S_max-1,)` | 실제 사용된 노이즈 ID들의 텐서 (미사용 슬롯은 `-1`로 패딩) |
+| `num_sources`| `int` | 현재 샘플에서 실제로 사용된 소스(음성+노이즈)의 총 개수 |
 | `snr` | `float` | 이 샘플에 적용될 목표 SNR 값 |
 | `mic_config` | `dict` | BCM 사용 여부 등 마이크 설정 정보 |
+| `speech_id` | `int` | 원본 클린 음성의 데이터베이스 ID |
+| `rir_id` | `int` | 사용된 RIR의 데이터베이스 ID |
 
 ---
 
