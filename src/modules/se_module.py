@@ -259,6 +259,7 @@ class SEModule(L.LightningModule):
         self.log('test_sdr', sdr_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         self.log('test_stoi', stoi_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         self.log('test_pesq', pesq_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        return {
             "test_si_sdr": si_sdr_val, 
             "test_sdr": sdr_val,
             "test_stoi": stoi_val,
