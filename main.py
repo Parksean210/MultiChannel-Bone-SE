@@ -1,11 +1,11 @@
-import mlflow
+import torch
 from lightning.pytorch.cli import LightningCLI
+
+# RTX 30xx/40xx Tensor Core 활성화 (성능 향상, 정밀도 미세 손실)
+torch.set_float32_matmul_precision('high')
 # Note: SEModule and SEDataModule are loaded dynamically via YAML class_path
 
 def cli_main():
-    # MLflow 시스템 메트릭 로깅 활성화
-    mlflow.enable_system_metrics_logging()
-    
     # 순수 LightningCLI 사용 (설정은 YAML에서 관리)
     LightningCLI(
         save_config_callback=None,

@@ -32,16 +32,21 @@ model:
       weight_decay: 1e-5
 
 trainer:
+  default_root_dir: "results"
   max_epochs: 5
   accelerator: "gpu"
   devices: 1
-  precision: "16-mixed" # Mixed Precision for faster training
+  precision: "16-mixed"
   log_every_n_steps: 1
   check_val_every_n_epoch: 1
-  # limit_train_batches: 10 # Uncomment for quick debugging
+  # limit_train_batches: 10  # 빠른 디버깅용
   # limit_val_batches: 5
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
-      experiment_name: "baseline_verification"
-      tracking_uri: "file:./mlruns"
+      experiment_name: "Architecture"        # 아키텍처 비교 실험군
+      run_name: "Baseline-DummyModel"        # 파이프라인 검증용 기준선
+      tracking_uri: "sqlite:///results/mlflow.db"
+      artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
+  callbacks:
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback  # 자동 태깅
