@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(du -sh:*)",
+      "Bash(cd:*)",
+      "Bash(uv run python:*)",
+      "Bash(wsl -d Ubuntu -- bash -lc \"cd /home/parksean210/project/speech_enhancement && git diff HEAD -- src/utils/synthesis.py\")",
+      "Bash(wsl -d Ubuntu -- bash -lc \"cd /home/parksean210/project/speech_enhancement && git log --oneline -10\")",
+      "Bash(wsl -d Ubuntu -- bash -lc \"cd /home/parksean210/project/speech_enhancement && git show HEAD:src/modules/se_module.py\")",
+      "Bash(wsl -d Ubuntu -- bash -lc \"cd /home/parksean210/project/speech_enhancement && git stash list && git status --short\")",
+      "Bash(wsl -d Ubuntu -- bash -lc \"cd /home/parksean210/project/speech_enhancement && git stash pop\")",
+      "Bash(wsl -d Ubuntu -- bash -lc:*)",
+      "Bash(curl:*)",
+      "Bash(wsl.exe:*)",
+      "Read(///wsl.localhost/Ubuntu/home/parksean210/**)",
+      "Read(///wsl.localhost/Ubuntu/home/**)",
+      "Read(///wsl.localhost/Ubuntu//**)",
+      "Bash(wsl -e ls:*)",
+      "Bash(wsl ls:*)",
+      "Bash(cmd /c \"wsl ls /home/parksean210/project/speech_enhancement\")",
+      "Bash(cmd /c \"wsl --exec ls /home/parksean210/project/speech_enhancement\")",
+      "Bash(powershell -Command:*)",
+      "Bash(wsl -d Ubuntu -- bash -c \"cd /home/parksean210/project/speech_enhancement && uv run python scripts/verify_pipeline.py --split train --n_batches 1 --batch_size 4 2>&1\":*)",
+      "Bash(wsl -d Ubuntu -- bash -c \"source ~/.bashrc 2>/dev/null; source ~/.profile 2>/dev/null; export PATH=\"\"$HOME/.cargo/bin:$HOME/.local/bin:$PATH\"\"; cd /home/parksean210/project/speech_enhancement && uv run python scripts/verify_pipeline.py --split train --n_batches 1 --batch_size 4 2>&1\")",
+      "Bash(~/.local/bin/uv run pytest:*)",
+      "Bash(powershell.exe -Command \"wsl -d Ubuntu -- bash -c ''cd /home/parksean210/project/speech_enhancement && ~/.local/bin/uv run pytest tests/ -v --tb=short -m \"\"not slow\"\" --no-header 2>&1 | head -140''\")",
+      "Bash(wsl -d Ubuntu -- bash -c \"cd ~/project/speech_enhancement && source ~/.bashrc && which uv || which python3\":*)",
+      "Read(//home/parksean210/project/speech_enhancement/src/data/**)"
+    ],
+    "additionalDirectories": [
+      "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\results",
+      "\\home\\parksean210\\project\\speech_enhancement\\tests",
+      "\\home\\parksean210\\project\\speech_enhancement\\docs\\CLAUDE",
+      "\\home\\parksean210\\project\\speech_enhancement\\configs",
+      "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\configs",
+      "\\home\\parksean210\\project\\speech_enhancement\\scripts",
+      "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\scripts"
+    ]
+  }
+}

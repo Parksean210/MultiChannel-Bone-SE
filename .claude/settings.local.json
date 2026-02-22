@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(///wsl.localhost/Ubuntu/home/parksean210/project/speech_enhancement/**)",
+      "Bash(xargs git rm:*)",
+      "Read(///wsl.localhost/Ubuntu//**)",
+      "Bash(git config:*)",
+      "Bash(git commit:*)",
+      "Bash(echo:*)",
+      "Bash(git add:*)",
+      "Bash(REPO=\"//wsl.localhost/Ubuntu/home/parksean210/project/speech_enhancement\")",
+      "Bash(git -C:*)",
+      "Bash(git rm:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)"
+    ]
+  }
+}
