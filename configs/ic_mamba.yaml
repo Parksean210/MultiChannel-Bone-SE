@@ -5,56 +5,56 @@ data:
   class_path: src.data.SEDataModule
   init_args:
     db_path: "data/metadata.db"
-    batch_size: 4  # Now possible with Gradient Checkpointing
+    batch_size: 12
     num_workers: 8
     target_sr: 16000
 
 model:
   class_path: src.modules.se_module.SEModule
   init_args:
-    target_type: "aligned_dry" # Dereverberation
+    target_type: "aligned_dry"   # Dereverberation
     sample_rate: 16000
     num_val_samples_to_log: 4
-    # 1. Define the IC-Conv-TasNet Model
+    # 1. IC-Mamba Model
     model:
-      class_path: src.models.ICConvTasNet
+      class_path: src.models.ICMamba
       init_args:
-        in_channels: 5
-        out_channels_tcn: 64
-        enc_kernel: 256
-        enc_num_feats: 512
-        bot_num_feats: 128
-        tcn_hidden: 256
-        num_layers: 8
-        num_stacks: 3
-        kernel_size: 3
-        use_checkpoint: true # 로컬(RTX 3080 10GB) 환경에서는 True 권장. 슈퍼컴(A100/H100)에서는 False로 변경 요망.
+        in_channels: 5          # M: 마이크 수 (BCM 포함)
+        out_channels: 64        # C: 내부 채널 수
+        enc_kernel: 256         # K: 인코더 윈도우 길이
+        enc_num_feats: 512      # F: 인코더 특징 수
+        bot_num_feats: 128      # N: 보틀넥 특징 수 (= Mamba d_model)
+        d_state: 64             # Mamba SSM 상태 차원 (16 → 64: SSM 표현력 증가)
+        d_conv: 4               # Mamba 내부 depthwise conv 커널 크기
+        expand: 2               # d_inner = expand × bot_num_feats = 256
+        num_layers: 12          # Mamba 레이어 수 (8 → 12: 수용 범위 증가)
+        use_checkpoint: true    # RTX 3080(10GB) 환경 권장. A100/H100에서는 false로 변경.
 
-    # 2. Define the Loss Function (Menu Selection)
+    # 2. Loss Function
     loss:
       class_path: src.modules.losses.CompositeLoss
       init_args:
-        alpha: 0.1 # Weight for Frequency Loss
+        alpha: 0.1              # Frequency Loss 가중치
 
-    # 3. Optimization Settings
+    # 3. Optimization
     optimizer_config:
       lr: 1e-3
       weight_decay: 1e-5
 
 trainer:
   default_root_dir: "results"
-  max_epochs: 50
+  max_epochs: 1
   accelerator: "gpu"
   devices: "auto"
   strategy: "ddp_find_unused_parameters_true"
   precision: "16-mixed"
   log_every_n_steps: 10
-  val_check_interval: 7857
+  val_check_interval: 2000
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
-      experiment_name: "Architecture"        # 아키텍처 비교 실험군 (IC-ConvTasNet vs IC-Mamba 등)
-      run_name: "IC-ConvTasNet-5ch-base"     # 명확한 run 식별자
+      experiment_name: "Architecture"       # 아키텍처 비교 실험군
+      run_name: "IC-Mamba-5ch-causal"       # run 식별자
       tracking_uri: "sqlite:///results/mlflow.db"
       artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
   callbacks:
@@ -76,4 +76,4 @@ trainer:
         patience: 10
         mode: "min"
         verbose: True
-    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback  # 자동 태깅 (git hash, model_type, config artifact)
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback

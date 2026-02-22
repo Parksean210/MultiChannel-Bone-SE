@@ -94,7 +94,7 @@ class ICConvTasNet(BaseSEModel):
                  kernel_size: int = 3,       # P: 커널 크기
                  use_checkpoint: bool = False): # 메모리 최적화 옵션 (A100/H100 등 대용량 GPU에서는 False 권장)
         
-        super().__init__(n_fft=enc_kernel, hop_length=enc_kernel//2)
+        super().__init__(in_channels=in_channels, n_fft=enc_kernel, hop_length=enc_kernel//2)
         
         self.enc_kernel = enc_kernel
         self.enc_stride = enc_kernel // 2

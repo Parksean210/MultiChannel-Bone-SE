@@ -1,42 +1,44 @@
 # lightning.pytorch==2.0.0
+# BCM Ablation: BCM 채널 없이 4채널(M=4)만 사용.
+# ic_mamba.yaml과의 차이: in_channels=4, run_name, mic_config.use_bcm=false
 seed_everything: 42
 
 data:
   class_path: src.data.SEDataModule
   init_args:
     db_path: "data/metadata.db"
-    batch_size: 4  # Now possible with Gradient Checkpointing
+    batch_size: 4
     num_workers: 8
     target_sr: 16000
+    # BCM 채널 비활성화 → 데이터 배치에 BCM 신호 없이 4ch만 전달
+    mic_config:
+      use_bcm: false
 
 model:
   class_path: src.modules.se_module.SEModule
   init_args:
-    target_type: "aligned_dry" # Dereverberation
+    target_type: "aligned_dry"
     sample_rate: 16000
     num_val_samples_to_log: 4
-    # 1. Define the IC-Conv-TasNet Model
     model:
-      class_path: src.models.ICConvTasNet
+      class_path: src.models.ICMamba
       init_args:
-        in_channels: 5
-        out_channels_tcn: 64
+        in_channels: 4          # M=4: BCM 채널 제거 (Ablation)
+        out_channels: 64
         enc_kernel: 256
         enc_num_feats: 512
         bot_num_feats: 128
-        tcn_hidden: 256
+        d_state: 16
+        d_conv: 4
+        expand: 2
         num_layers: 8
-        num_stacks: 3
-        kernel_size: 3
-        use_checkpoint: true # 로컬(RTX 3080 10GB) 환경에서는 True 권장. 슈퍼컴(A100/H100)에서는 False로 변경 요망.
+        use_checkpoint: true
 
-    # 2. Define the Loss Function (Menu Selection)
     loss:
       class_path: src.modules.losses.CompositeLoss
       init_args:
-        alpha: 0.1 # Weight for Frequency Loss
+        alpha: 0.1
 
-    # 3. Optimization Settings
     optimizer_config:
       lr: 1e-3
       weight_decay: 1e-5
@@ -49,12 +51,12 @@ trainer:
   strategy: "ddp_find_unused_parameters_true"
   precision: "16-mixed"
   log_every_n_steps: 10
-  val_check_interval: 7857
+  val_check_interval: 4000
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
-      experiment_name: "Architecture"        # 아키텍처 비교 실험군 (IC-ConvTasNet vs IC-Mamba 등)
-      run_name: "IC-ConvTasNet-5ch-base"     # 명확한 run 식별자
+      experiment_name: "Architecture"
+      run_name: "IC-Mamba-4ch-causal-bcm-off"  # BCM Ablation run 식별자
       tracking_uri: "sqlite:///results/mlflow.db"
       artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
   callbacks:
@@ -76,4 +78,4 @@ trainer:
         patience: 10
         mode: "min"
         verbose: True
-    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback  # 자동 태깅 (git hash, model_type, config artifact)
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback

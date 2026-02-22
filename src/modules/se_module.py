@@ -1,394 +1,229 @@
 import torch
 import lightning as L
+import mlflow
 from typing import Optional, Dict, Any
-import torchaudio
-import torchaudio.functional as F_audio
-import torch.nn.functional as F
 import os
 import tempfile
-import soundfile as sf
-import matplotlib.pyplot as plt
-import io
-import torchaudio
-from torchmetrics.audio import (
-    ScaleInvariantSignalDistortionRatio as SI_SDR,
-    SignalDistortionRatio as SDR,
+
+from src.utils.synthesis import create_bcm_kernel, apply_spatial_synthesis
+from src.utils.metrics import create_metric_suite, compute_and_log_metrics
+from src.utils.audio_io import (
+    prepare_audio_for_saving,
+    build_metadata_filename,
+    create_spectrogram_image,
+    save_audio_file,
 )
-from torchmetrics.audio.stoi import ShortTimeObjectiveIntelligibility as STOI
-from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality as PESQ
+
 
 class SEModule(L.LightningModule):
     """
     Speech Enhancement 기능을 수행하는 PyTorch Lightning 모듈.
     모델 학습/검증 루프 제어, 최적화(Optimization), 지표 로깅 및 GPU 기반 데이터 합성을 담당합니다.
     """
-    def __init__(self, 
-                 model: torch.nn.Module, 
-                 loss: torch.nn.Module, 
+    def __init__(self,
+                 model: torch.nn.Module,
+                 loss: torch.nn.Module,
                  optimizer_config: Dict[str, Any] = {"lr": 1e-3, "weight_decay": 0.0},
-                 target_type: str = "spatialized", # "spatialized" or "aligned_dry"
+                 target_type: str = "spatialized",
                  sample_rate: int = 16000,
                  num_val_samples_to_log: int = 4):
         """
         Args:
-            model: 음성 향상을 수행할 신경망 모델
+            model: 음성 향상을 수행할 신경망 모델 (BaseSEModel 자식 클래스)
             loss: 손실 함수 (예: CompositeLoss)
             optimizer_config: 학습률(lr) 및 가중치 감쇠(weight_decay) 설정
             target_type: 정답 데이터 종류 ("spatialized": 잔향 포함, "aligned_dry": 잔향 제거)
+            sample_rate: 오디오 샘플 레이트
+            num_val_samples_to_log: 검증 시 로깅할 오디오 샘플 수
         """
         super().__init__()
         self.save_hyperparameters(ignore=['model', 'loss'])
-        
+
         self.model = model
         self.loss = loss
         self.optimizer_config = optimizer_config
         self.target_type = target_type
         self.sample_rate = sample_rate
         self.num_val_samples_to_log = num_val_samples_to_log
-        
-        # Metrics
-        self.si_sdr = SI_SDR()
-        self.sdr = SDR()
-        self.stoi = STOI(fs=sample_rate)
-        # PESQ는 16kHz(wb) 또는 8kHz(nb)만 지원하며 전송 지연 등에 민감함
-        self.pesq = PESQ(fs=sample_rate, mode='wb') 
+
+        # BCM 커널 캐싱 (매 스텝 재생성 방지)
+        bcm_kernel = create_bcm_kernel(cutoff_hz=500.0, sample_rate=sample_rate, num_taps=101)
+        self.register_buffer('bcm_kernel', bcm_kernel)
+
+        # Metrics (torchmetrics 객체 - DDP 분산 집계 지원)
+        metrics = create_metric_suite(sample_rate)
+        self.si_sdr = metrics["si_sdr"]
+        self.sdr = metrics["sdr"]
+        self.stoi = metrics["stoi"]
+        self.pesq = metrics["pesq"]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass calling the underlying model.
+        Forward pass. 모델의 in_channels에 맞게 자동 슬라이싱합니다.
         Input: (B, C, T) -> Output: (B, C, T)
         """
-        # 모델의 입력 채널 수만큼만 슬라이싱하여 전달 (예: 5채널 데이터에서 4채널만 쓰기 등 대응)
-        # .contiguous()를 추가하여 모델 내부의 .view() 연산 시 발생할 수 있는 오류를 방지합니다.
-        return self.model(x[:, :self.model.channel_proj.in_channels, :].contiguous())
+        return self.model(x[:, :self.model.in_channels, :].contiguous())
+
+    def _select_target(self, batch: Dict) -> torch.Tensor:
+        """배치에서 타겟 텐서를 선택합니다 (Channel 0 기준)."""
+        if self.target_type == "aligned_dry":
+            return batch['aligned_dry'][:, 0:1, :]
+        return batch['clean'][:, 0:1, :]
+
+    def _apply_gpu_synthesis(self, batch: Dict) -> Dict:
+        """GPU 기반 실시간 공간 합성. 캐싱된 BCM 커널을 사용합니다."""
+        return apply_spatial_synthesis(batch, bcm_kernel=self.bcm_kernel, sample_rate=self.sample_rate)
 
     def training_step(self, batch, batch_idx):
-        """
-        학습 단계 루프. GPU 기반 실시간 합성을 수행한 후 전방향 연산 및 손실을 계산합니다.
-        """
-        # 1. GPU 기반 실시간 공간 합성 (Data Augmentation 효과)
+        """학습 단계 루프."""
         batch = self._apply_gpu_synthesis(batch)
-        
-        noisy = batch['noisy']
-        
-        # Target selection (Channel 0 기준)
-        if self.target_type == "aligned_dry":
-            target = batch['aligned_dry'][:, 0:1, :] # [B, 1, T]
-        else:
-            target = batch['clean'][:, 0:1, :]      # [B, 1, T]
-        
-        # 모델 전방향 연산 (Forward Pass)
-        est_clean = self(noisy) # [B, M, T]
-        
-        # 0번 채널에 대해서만 손실 함수 계산 (안경 전면 마이크 기준)
+        target = self._select_target(batch)
+        est_clean = self(batch['noisy'])
+
         loss = self.loss(est_clean[:, 0:1, :], target)
-        
-        # 지표 로깅
-        batch_size = noisy.shape[0]
+
+        batch_size = batch['noisy'].shape[0]
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
         return loss
 
-    def _apply_gpu_synthesis(self, batch: Dict):
-        """
-        DataLoader에서 전달받은 원본 데이터를 바탕으로 GPU 상에서 공간 합성을 수행합니다.
-        FFT Convolution을 통해 대규모 배치를 고속으로 처리합니다.
-        """
-        raw_speech = batch['raw_speech']   # Shape: (B, T)
-        raw_noises = batch['raw_noises']   # Shape: (B, S-1, T)
-        rir_tensor = batch['rir_tensor']   # Shape: (B, M, S, L)
-        snr = batch['snr']                 # Shape: (B,)
-        
-        B, M, S, L = rir_tensor.shape
-        T = raw_speech.shape[-1]
-        device = raw_speech.device
-
-        # 1. 스피치 소스 공간화 (Source Index 0)
-        # (Batch, 1, Time) * (Batch, Mic, RIR_Len) -> (Batch, Mic, Time)
-        speech_rir = rir_tensor[:, :, 0, :]
-        speech_mc = F_audio.fftconvolve(raw_speech.unsqueeze(1), speech_rir, mode="full")
-        speech_mc = speech_mc[:, :, :T] # 원본 길이로 절삭
-
-        # 2. 노이즈 소스 공간화 및 누적 (Source Index 1..S-1)
-        noise_mc_total = torch.zeros_like(speech_mc)
-        for k in range(1, S):
-            noise_rir = rir_tensor[:, :, k, :]
-            noise_wav = raw_noises[:, k-1, :]
-            
-            # 노이즈별 RIR을 적용하여 다채널 잡음 생성
-            noise_spatialized = F_audio.fftconvolve(noise_wav.unsqueeze(1), noise_rir, mode="full")
-            noise_mc_total += noise_spatialized[:, :, :T]
-
-        # 3. 골전도 센서(BCM) 모델링 (마지막 마이크 채널 대상)
-        use_bcm = batch['mic_config']['use_bcm'][0]
-        if use_bcm:
-            # 500Hz Cutoff로 Sinc FIR 로우패스 필터 생성 (BCM 특성)
-            cutoff = 500.0
-            num_taps = 101 # 필터 길이 (홀수 권장)
-            t = torch.arange(num_taps, device=device) - (num_taps - 1) / 2
-            
-            # Sinc 함수 생성
-            fc = cutoff / self.sample_rate
-            sinc = torch.sinc(2 * fc * t)
-            
-            # Hanning 윈도우 적용하여 Sidelobe 억제 (버터워스보다 깔끔한 차단 특성)
-            window = torch.hann_window(num_taps, periodic=False, device=device)
-            kernel = (sinc * window).view(1, 1, -1)
-            kernel = kernel / kernel.sum() # Normalize
-            
-            # 마지막 채널(BCM)에 대해 저대역 통과 필터링 수행
-            bcm_speech = speech_mc[:, -1:]
-            bcm_speech_padded = F.pad(bcm_speech, (num_taps // 2, num_taps // 2), mode='reflect')
-            speech_mc[:, -1:] = F.conv1d(bcm_speech_padded, kernel)[:, :, :T]
-            
-            bcm_noise = noise_mc_total[:, -1:]
-            bcm_noise_padded = F.pad(bcm_noise, (num_taps // 2, num_taps // 2), mode='reflect')
-            noise_mc_total[:, -1:] = F.conv1d(bcm_noise_padded, kernel)[:, :, :T]
-            
-            # BCM 센서의 잡음 감쇄 특성 반영
-            atten_db = batch['mic_config']['bcm_noise_attenuation_db'][0]
-            atten_factor = 10 ** (-atten_db / 20.0)
-            noise_mc_total[:, -1] *= atten_factor
-
-        # 4. SNR 스케일링 (0번 참조 채널의 RMS 기준)
-        # 학계 관례에 따라 기준 마이크(0번)에서의 스피치/노이즈 비율을 설정된 SNR로 맞춥니다.
-        clean_rms = torch.sqrt(torch.mean(speech_mc[:, 0, :]**2, dim=-1) + 1e-8)
-        noise_rms = torch.sqrt(torch.mean(noise_mc_total[:, 0, :]**2, dim=-1) + 1e-8)
-        
-        # 목표 SNR 달성을 위한 노이즈 가중치 산출
-        target_factor = (clean_rms / (10**(snr/20))) / (noise_rms + 1e-8)
-        noise_mc_total *= target_factor.view(B, 1, 1)
-
-
-        # 5. 최종 혼합 (Clean + Scaled Noise)
-        noisy_mc = speech_mc + noise_mc_total
-        
-        # 6. 정렬된 드라이 음성 생성 (Dereverberation 타겟용)
-        # Reference Mic (0번)의 RIR Peak를 찾아 원본 음성을 시간 정렬합니다.
-        ref_rir = rir_tensor[:, 0, 0, :] # (B, L)
-        peak_indices = torch.argmax(torch.abs(ref_rir), dim=-1) # (B,)
-        
-        aligned_dry = torch.zeros((B, 1, T), device=device)
-        for b in range(B):
-            peak = peak_indices[b]
-            if peak < T:
-                aligned_dry[b, 0, peak:] = raw_speech[b, :T-peak]
-        
-        batch['noisy'] = noisy_mc
-        batch['clean'] = speech_mc 
-        batch['aligned_dry'] = aligned_dry
-        return batch
-
     def validation_step(self, batch, batch_idx):
-        """
-        검증 단계 루프. 모델의 성능을 평가하고 주기적으로 오디오 샘플을 로깅합니다.
-        """
+        """검증 단계 루프."""
         batch = self._apply_gpu_synthesis(batch)
-        noisy = batch['noisy']
-        
-        # Target selection (Channel 0 기준)
-        if self.target_type == "aligned_dry":
-            target = batch['aligned_dry'][:, 0:1, :]
-        else:
-            target = batch['clean'][:, 0:1, :]
-        
-        est_clean = self(noisy)
-        loss = self.loss(est_clean[:, 0:1, :], target)
-        
-        # 검증 손실 및 지표 로깅
-        batch_size = noisy.shape[0]
+        target = self._select_target(batch)
+        est_clean = self(batch['noisy'])
+        est_ch0 = est_clean[:, 0:1, :]
+
+        loss = self.loss(est_ch0, target)
+        batch_size = batch['noisy'].shape[0]
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-        
-        # 1. SI-SDR
-        val_si_sdr = self.si_sdr(est_clean[:, 0:1, :], target)
-        self.log('val_si_sdr', val_si_sdr, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
 
-        # 2. SDR
-        val_sdr = self.sdr(est_clean[:, 0:1, :], target)
-        self.log('val_sdr', val_sdr, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
+        # 메트릭 일괄 계산 및 로깅
+        metric_suite = {"si_sdr": self.si_sdr, "sdr": self.sdr, "stoi": self.stoi, "pesq": self.pesq}
+        compute_and_log_metrics(self, metric_suite, est_ch0, target, prefix="val",
+                                batch_size=batch_size, sync_dist=True)
 
-        # 3. STOI
-        val_stoi = self.stoi(est_clean[:, 0:1, :], target)
-        self.log('val_stoi', val_stoi, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-
-        # 4. PESQ
-        try:
-            val_pesq = self.pesq(est_clean[:, 0:1, :], target)
-        except Exception:
-            val_pesq = torch.tensor(1.0, device=self.device)
-        self.log('val_pesq', val_pesq, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=batch_size)
-
-        
-        # 에폭의 첫 번째 배치에 대해 오디오 샘플을 시각화/청취용으로 로깅
+        # 에폭의 첫 번째 배치에 대해 오디오 샘플 로깅
         if batch_idx == 0:
             target_to_log = batch['aligned_dry'] if self.target_type == "aligned_dry" else batch['clean']
-            self.log_audio_samples(noisy, target_to_log, est_clean, batch=batch)
+            self.log_audio_samples(batch['noisy'], target_to_log, est_clean, batch=batch)
 
     def test_step(self, batch, batch_idx):
-        """
-        테스트 단계 루프. SI-SDR 등 정량적 지표를 계산하고 최종 성능을 평가합니다.
-        """
+        """테스트 단계 루프."""
         batch = self._apply_gpu_synthesis(batch)
-        noisy = batch['noisy']
-        
-        # Target selection (Channel 0 기준, Aligned Dry 권장)
         target = batch['aligned_dry'][:, 0:1, :]
-        
-        est_clean = self(noisy)
-        est_clean_0 = est_clean[:, 0:1, :]
-        
-        # 1. SI-SDR (Scale-Invariant SDR)
-        si_sdr_val = self.si_sdr(est_clean_0, target)
-        
-        # 2. SDR (Classic BSS-Eval)
-        sdr_val = self.sdr(est_clean_0, target)
-        
-        # 3. STOI (Intelligibility)
-        stoi_val = self.stoi(est_clean_0, target)
-        
-        # 4. PESQ (Quality)
-        # PESQ는 에러 발생 가능성이 있어 안전하게 처리 (예: 너무 짧은 구간 등)
-        try:
-            pesq_val = self.pesq(est_clean_0, target)
-        except Exception:
-            pesq_val = torch.tensor(1.0, device=self.device) # 최솟값으로 처리
-        
+        est_clean = self(batch['noisy'])
+        est_ch0 = est_clean[:, 0:1, :]
 
-        # 로깅
-        batch_size = noisy.shape[0]
-        self.log('test_si_sdr', si_sdr_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        self.log('test_sdr', sdr_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        self.log('test_stoi', stoi_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        self.log('test_pesq', pesq_val, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        return {
-            "test_si_sdr": si_sdr_val, 
-            "test_sdr": sdr_val,
-            "test_stoi": stoi_val,
-            "test_pesq": pesq_val,
-        }
-        
+        batch_size = batch['noisy'].shape[0]
+        metric_suite = {"si_sdr": self.si_sdr, "sdr": self.sdr, "stoi": self.stoi, "pesq": self.pesq}
+        results = compute_and_log_metrics(self, metric_suite, est_ch0, target, prefix="test",
+                                          batch_size=batch_size, sync_dist=False)
+        return {f"test_{k}": v for k, v in results.items()}
+
+    def on_test_epoch_end(self):
+        """테스트 완료 후 MLflow에 최종 집계 메트릭을 summary로 기록합니다."""
+        if not (self.logger and "MLFlowLogger" in str(type(self.logger))):
+            return
+
+        tracking_uri = getattr(self.logger, '_tracking_uri', None) \
+                    or getattr(self.logger, 'tracking_uri', None)
+        if tracking_uri:
+            mlflow.set_tracking_uri(tracking_uri)
+        with mlflow.start_run(run_id=self.logger.run_id):
+            for name, metric_fn in [
+                ("si_sdr", self.si_sdr),
+                ("sdr", self.sdr),
+                ("stoi", self.stoi),
+                ("pesq", self.pesq),
+            ]:
+                try:
+                    val = metric_fn.compute()
+                    mlflow.log_metric(f"test_{name}_final", val.item())
+                except Exception:
+                    pass
+
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        """
-        추론 단계 루프. 입력 신호에 대해 강화를 수행하고 결과를 반환합니다.
-        """
+        """추론 단계 루프."""
         batch = self._apply_gpu_synthesis(batch)
-        noisy = batch['noisy']
-        
-        # Inference
-        est_clean = self(noisy)
-        
-        # Target selection (Channel 0 logic should be handled by writer)
+        est_clean = self(batch['noisy'])
+
         if self.target_type == "aligned_dry":
             target = batch['aligned_dry']
         else:
             target = batch['clean']
-            
+
         return {
-            "noisy": noisy,
+            "noisy": batch['noisy'],
             "enhanced": est_clean,
             "target": target,
-            # Metadata for folder naming
             "speech_id": batch.get("speech_id"),
             "noise_ids": batch.get("noise_ids"),
             "rir_id": batch.get("rir_id"),
-            "snr": batch.get("snr")
+            "snr": batch.get("snr"),
         }
-            
-    def log_audio_samples(self, noisy: torch.Tensor, clean: torch.Tensor, est_clean: torch.Tensor, batch: Optional[Dict] = None):
-        """
-        추론 결과를 MLflow/Tensorboard에 오디오 형태로 로깅합니다.
-        배치 내의 첫 N개 샘플에 대해 원본, 정답(Clean), 추론 결과를 기록합니다.
-        """
-        # 로깅할 샘플 수 제한
+
+    def log_audio_samples(self, noisy: torch.Tensor, clean: torch.Tensor,
+                          est_clean: torch.Tensor, batch: Optional[Dict] = None):
+        """추론 결과를 MLflow/Tensorboard에 오디오 형태로 로깅합니다."""
         num_samples = min(noisy.shape[0], self.num_val_samples_to_log)
-        
-        # Move to CPU for logging (0번 채널만 로깅)
-        noisy = noisy[:num_samples, 0].detach().cpu()
-        clean = clean[:num_samples, 0].detach().cpu()
-        est_clean = est_clean[:num_samples, 0].detach().cpu()
-        
-        # If using TensorBoard (default in Lightning)
+
+        # Channel 0, CPU 전송
+        noisy_cpu = noisy[:num_samples, 0].detach().cpu()
+        clean_cpu = clean[:num_samples, 0].detach().cpu()
+        est_cpu = est_clean[:num_samples, 0].detach().cpu()
+
+        # TensorBoard
         if self.logger and hasattr(self.logger.experiment, 'add_audio'):
             for i in range(num_samples):
-                self.logger.experiment.add_audio(f'sample_{i}/Noisy_Mic0', noisy[i], self.global_step, sample_rate=self.sample_rate)
-                self.logger.experiment.add_audio(f'sample_{i}/Enhanced_Mic0', est_clean[i], self.global_step, sample_rate=self.sample_rate)
-                self.logger.experiment.add_audio(f'sample_{i}/Target_Mic0', clean[i], self.global_step, sample_rate=self.sample_rate)
-        
-        # If using MLflowLogger
+                self.logger.experiment.add_audio(f'sample_{i}/Noisy_Mic0', noisy_cpu[i], self.global_step, sample_rate=self.sample_rate)
+                self.logger.experiment.add_audio(f'sample_{i}/Enhanced_Mic0', est_cpu[i], self.global_step, sample_rate=self.sample_rate)
+                self.logger.experiment.add_audio(f'sample_{i}/Target_Mic0', clean_cpu[i], self.global_step, sample_rate=self.sample_rate)
+
+        # MLflow
         elif self.logger and "MLFlowLogger" in str(type(self.logger)):
-            # MLflowLogger doesn't have add_audio, use log_artifact instead
-            
             run_id = self.logger.run_id
             for i in range(num_samples):
-                # Metadata extraction for filename
-                base_name_info = f"sample_{i}"
-                if batch is not None:
-                    sid = batch["speech_id"][i].item() if "speech_id" in batch else "unknown"
-                    rid = batch["rir_id"][i].item() if "rir_id" in batch else "unknown"
-                    snr = batch["snr"][i].item() if "snr" in batch else 0.0
-                    
-                    # Noise IDs extraction and filtering
-                    nids_raw = batch["noise_ids"][i]
-                    if isinstance(nids_raw, torch.Tensor):
-                        nids_list = nids_raw.tolist()
-                    else:
-                        nids_list = nids_raw if isinstance(nids_raw, list) else [nids_raw]
-                    nids_filtered = [str(int(nid)) for nid in nids_list if nid != -1]
-                    nids_str = "_".join(nids_filtered)
-                    
-                    base_name_info = f"sid_{sid}_nids_{nids_str}_rid_{rid}_snr_{snr:.1f}dB"
+                # 메타데이터 파일명 생성
+                if batch is not None and "speech_id" in batch:
+                    base_name = build_metadata_filename(
+                        speech_id=batch["speech_id"][i],
+                        noise_ids=batch["noise_ids"][i],
+                        rir_id=batch["rir_id"][i],
+                        snr=batch["snr"][i],
+                    )
+                else:
+                    base_name = f"sample_{i}"
 
                 with tempfile.TemporaryDirectory() as tmp_dir:
-                    # Save audio and spectrograms to temporary file
-                    for name, signal in [("Noisy", noisy[i]), ("Enhanced", est_clean[i]), ("Target", clean[i])]:
-                        # 1. Save Audio Artifact
-                        # Filename: [Type]_[Metadata]_step[Step].wav
-                        wav_name = f"{name}_{base_name_info}_step{self.global_step}.wav"
+                    for name, signal in [("Noisy", noisy_cpu[i]), ("Enhanced", est_cpu[i]), ("Target", clean_cpu[i])]:
+                        # WAV 저장
+                        wav_name = f"{name}_{base_name}_step{self.global_step}.wav"
                         wav_path = os.path.join(tmp_dir, wav_name)
-                        # Explicitly convert to float32 for soundfile support
-                        sf.write(wav_path, signal.to(torch.float32).numpy(), self.sample_rate)
+                        save_audio_file(wav_path, signal.unsqueeze(0), self.sample_rate, channel=0)
                         self.logger.experiment.log_artifact(run_id, wav_path, artifact_path=f"audio_samples/sample_{i}")
 
-                        # 2. Save Spectrogram Image Artifact
-                        plt.figure(figsize=(10, 4))
-                        # Use torchaudio for spectrogram calculation
-                        n_fft = 512
-                        specgram = torchaudio.transforms.Spectrogram(n_fft=n_fft)(signal)
-                        spec_db = torchaudio.functional.amplitude_to_DB(specgram, 1.0, 1e-10, 80.0).numpy()
-                        
-                        # Map bins to Frequency (0 to fs/2)
-                        f_max = self.sample_rate / 2000.0 # to kHz
-                        plt.imshow(spec_db, aspect='auto', origin='lower', cmap='viridis',
-                                   extent=[0, signal.shape[-1]/self.sample_rate, 0, f_max])
-                        
-                        plt.title(f"{name} Spectrogram ({base_name_info}, Step {self.global_step})")
-                        plt.xlabel("Time (s)")
-                        plt.ylabel("Frequency (kHz)")
-                        plt.colorbar(format='%+2.0f dB')
-                        plt.tight_layout()
-                        
-                        # Filename: [Type]_spec_[Metadata]_step[Step].png
-                        spec_name = f"{name}_spec_{base_name_info}_step{self.global_step}.png"
+                        # 스펙트로그램 저장
+                        spec_name = f"{name}_spec_{base_name}_step{self.global_step}.png"
                         spec_path = os.path.join(tmp_dir, spec_name)
-                        plt.savefig(spec_path)
-                        plt.close()
+                        create_spectrogram_image(
+                            signal, self.sample_rate, n_fft=512,
+                            title=f"{name} Spectrogram ({base_name}, Step {self.global_step})",
+                            save_path=spec_path,
+                        )
                         self.logger.experiment.log_artifact(run_id, spec_path, artifact_path=f"audio_samples/sample_{i}")
 
     def configure_optimizers(self):
-        """
-        최적화 알고리즘 및 학습률 스케줄러(Scheduler)를 설정합니다.
-        기본적으로 AdamW 최적화기와 ReduceLROnPlateau 스케줄러를 사용합니다.
-        """
+        """AdamW + ReduceLROnPlateau 설정."""
         optimizer = torch.optim.AdamW(
-            self.parameters(), 
+            self.parameters(),
             lr=self.optimizer_config.get('lr', 1e-3),
             weight_decay=self.optimizer_config.get('weight_decay', 0.0)
         )
-        
-        # 성능 정체 시 학습률을 감소시키는 스케줄러 설정
+
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=5
         )
-        
+
         return {
             "optimizer": optimizer,
             "lr_scheduler": {

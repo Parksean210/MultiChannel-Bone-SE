@@ -46,6 +46,7 @@ checkpoints/        # 모델 체크포인트 저장 폴더
 # 실험 결과물 및 오디오 예측 결과 (results 폴더 전체 무시)
 results/
 results/**
+test_model/
 
 # 모델 가중치 파일 (수백 MB ~ 수 GB)
 *.ckpt
@@ -70,9 +71,18 @@ wheels/
 *.egg-info/
 
 # ==========================
-# 6. IDE & OS 설정 (지저분함)
+# 6. NVIDIA WSL2 드라이버 로그
+# ==========================
+# CUDA 초기화 시 NVIDIA 드라이버가 현재 디렉토리에 자동 생성
+NVIDIA Corporation/
+
+# ==========================
+# 7. IDE & OS 설정 (지저분함)
 # ==========================
 .vscode/            # VS Code 설정 (팀 공유 안할거면 무시)
 .idea/              # JetBrains(PyCharm) 설정
 .DS_Store           # Mac 메타데이터
 Thumbs.db           # Windows 메타데이터
+# Claude Code instructions (private)
+CLAUDE.md
+**/CLAUDE.md
