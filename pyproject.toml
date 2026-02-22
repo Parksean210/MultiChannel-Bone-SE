@@ -49,3 +49,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
 ]
+
+[tool.uv.sources]
+mamba-ssm = { path = "wheels/mamba_ssm-2.3.0+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl" }
+causal-conv1d = { path = "wheels/causal_conv1d-1.6.0+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl" }
