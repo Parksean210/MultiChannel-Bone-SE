@@ -23,6 +23,32 @@
 
 ---
 
+## [최초 1회] 저장소 처음 받기 (개발자)
+
+새 PC나 서버에서 처음 코드를 받을 때 사용합니다.
+
+### main 브랜치만 받기 (권장)
+
+불필요한 브랜치(`dev/*` 등)를 제외하고 `main`만 가져옵니다.
+
+```bash
+git clone --branch main --single-branch <저장소_주소>
+cd speech_enhancement
+
+# 패키지 설치
+uv sync
+```
+
+### 전체 브랜치 받기
+
+```bash
+git clone <저장소_주소>
+cd speech_enhancement
+uv sync
+```
+
+---
+
 ## [최초 1회] 관리자 초기 설정
 
 사외망과 사내망 모두 접근 가능한 PC에서 수행합니다.
