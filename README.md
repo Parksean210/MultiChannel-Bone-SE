@@ -229,13 +229,40 @@ pkill -f "mlflow ui"
 
 ## 기술 스택
 
-- **프레임워크**: PyTorch 2.x + PyTorch Lightning 2.x + LightningCLI
+- **프레임워크**: PyTorch 2.7.1+cu126 + PyTorch Lightning 2.x + LightningCLI
 - **주요 모델**: ICMamba (mamba-ssm CUDA 커널, causal SSM)
 - **실험 추적**: MLflow (SQLite 백엔드, 자동 태깅, 오디오·스펙트로그램 아티팩트)
 - **DB**: SQLite + SQLModel (메타데이터 인덱싱)
 - **음향 시뮬레이션**: pyroomacoustics (RIR 생성)
 - **패키지 관리**: uv
-- **Python**: >= 3.10
+- **Python**: 3.10 (cp310)
+
+### 검증된 패키지 버전 (2026-02-23 기준)
+
+| 패키지 | 버전 | 비고 |
+|---|---|---|
+| PyTorch | 2.7.1+cu126 | |
+| CUDA | 12.6 | |
+| cuDNN | 9.5.1 | |
+| mamba-ssm | 2.3.0 | 로컬 whl 설치 (아래 참고) |
+| causal-conv1d | 1.6.0 | 로컬 whl 설치 (아래 참고) |
+| GPU | RTX 3080 (10GB) | |
+
+### mamba-ssm / causal-conv1d whl 설치
+
+mamba-ssm과 causal-conv1d는 PyPI에서 제공하는 빌드가 환경에 따라 동작하지 않을 수 있어, `wheels/` 디렉토리에 사전 빌드된 whl 파일을 포함합니다.
+
+```
+wheels/
+├── mamba_ssm-2.3.0+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl
+├── mamba_ssm-2.3.0+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+├── causal_conv1d-1.6.0+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl
+└── causal_conv1d-1.6.0+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+```
+
+`pyproject.toml`의 `[tool.uv.sources]`에 `cxx11abiTRUE` whl이 고정되어 있으므로 `uv sync` 한 번으로 자동 설치됩니다.
+
+> **cxx11abi 선택 기준**: GCC 5+ / glibc 2.17+ 환경(Ubuntu 18.04+)은 `TRUE`, 구형 환경은 `FALSE`.
 
 ---
 

@@ -7,13 +7,19 @@
 
 ## 사전 요구사항
 
-| 항목 | 최소 사양 | 권장 사양 |
+| 항목 | 최소 사양 | 검증된 환경 |
 |---|---|---|
-| GPU | VRAM 8GB 이상 | RTX 3080 / A100 |
+| GPU | VRAM 8GB 이상 | RTX 3080 (10GB) |
 | RAM | 16GB | 32GB 이상 |
 | 디스크 | 50GB (데이터 별도) | 200GB+ |
-| CUDA | 11.8 이상 | 12.x |
-| Python | 3.10 이상 | 3.11 |
+| CUDA | 12.x | 12.6 |
+| cuDNN | 8.x 이상 | 9.5.1 |
+| Python | 3.10 (cp310 고정) | 3.10 |
+| PyTorch | 2.7.x | 2.7.1+cu126 |
+| mamba-ssm | 2.3.0 | 2.3.0 (로컬 whl) |
+| causal-conv1d | 1.6.0 | 1.6.0 (로컬 whl) |
+
+> **주의**: mamba-ssm과 causal-conv1d는 `wheels/` 디렉토리의 사전 빌드 whl을 사용합니다. Python 버전이 cp310이 아니거나 CUDA/PyTorch 버전이 다르면 별도 whl을 빌드해야 합니다.
 
 ---
 
@@ -40,8 +46,13 @@ uv sync
 ### 1-3. 설치 확인
 
 ```bash
-uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-# 예상 출력: 2.x.x True
+uv run python -c "
+import torch
+print('PyTorch:', torch.__version__)        # 2.7.1+cu126
+print('CUDA:', torch.cuda.is_available())   # True
+import mamba_ssm; print('mamba-ssm:', mamba_ssm.__version__)          # 2.3.0
+import causal_conv1d; print('causal-conv1d:', causal_conv1d.__version__)  # 1.6.0
+"
 ```
 
 ---

@@ -43,7 +43,7 @@ model:
 
 trainer:
   default_root_dir: "results"
-  max_epochs: 1
+  max_epochs: 5
   accelerator: "gpu"
   devices: "auto"
   strategy: "ddp_find_unused_parameters_true"
