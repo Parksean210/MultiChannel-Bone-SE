@@ -1,0 +1,82 @@
+# BCM Ablation: BCM 채널 없이 4채널 에어 마이크만 사용
+# 비교 대상: ic_conv_tasnet.yaml (5ch, BCM 포함)
+#
+# 사용법:
+#   uv run python main.py fit --config configs/ic_conv_tasnet_bcm_off.yaml
+#
+# MLflow에서 Architecture experiment 내에서
+# "IC-ConvTasNet-5ch-base" run과 비교 가능
+
+# lightning.pytorch==2.0.0
+seed_everything: 42
+
+data:
+  class_path: src.data.SEDataModule
+  init_args:
+    db_path: "data/metadata.db"
+    batch_size: 4
+    num_workers: 8
+    target_sr: 16000
+
+model:
+  class_path: src.modules.se_module.SEModule
+  init_args:
+    target_type: "aligned_dry"
+    sample_rate: 16000
+    num_val_samples_to_log: 4
+    model:
+      class_path: src.models.ICConvTasNet
+      init_args:
+        in_channels: 4        # BCM 제거 → 4채널 에어 마이크만
+        out_channels_tcn: 64
+        enc_kernel: 256
+        enc_num_feats: 512
+        bot_num_feats: 128
+        tcn_hidden: 256
+        num_layers: 8
+        num_stacks: 3
+        kernel_size: 3
+        use_checkpoint: true
+
+    loss:
+      class_path: src.modules.losses.CompositeLoss
+      init_args:
+        alpha: 0.1
+
+    optimizer_config:
+      lr: 1e-3
+      weight_decay: 1e-5
+
+trainer:
+  default_root_dir: "results"
+  max_epochs: 50
+  accelerator: "gpu"
+  devices: "auto"
+  strategy: "ddp_find_unused_parameters_true"
+  precision: "16-mixed"
+  log_every_n_steps: 10
+  val_check_interval: 7857
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "BCM-Ablation"           # BCM 효과 검증 실험군
+      run_name: "IC-ConvTasNet-4ch-no-bcm"      # BCM 없는 4채널 버전
+      tracking_uri: "sqlite:///results/mlflow.db"
+      artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_loss"
+        mode: "min"
+        save_top_k: 1
+        filename: "best-model-{epoch:02d}-{val_loss:.2f}"
+    - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
+      init_args:
+        device_index: 0
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"
+        patience: 10
+        mode: "min"
+        verbose: True
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback

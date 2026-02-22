@@ -1,0 +1,81 @@
+# lightning.pytorch==2.0.0
+# BCM Ablation: BCM 채널 없이 4채널(M=4)만 사용.
+# ic_mamba.yaml과의 차이: in_channels=4, run_name, mic_config.use_bcm=false
+seed_everything: 42
+
+data:
+  class_path: src.data.SEDataModule
+  init_args:
+    db_path: "data/metadata.db"
+    batch_size: 4
+    num_workers: 8
+    target_sr: 16000
+    # BCM 채널 비활성화 → 데이터 배치에 BCM 신호 없이 4ch만 전달
+    mic_config:
+      use_bcm: false
+
+model:
+  class_path: src.modules.se_module.SEModule
+  init_args:
+    target_type: "aligned_dry"
+    sample_rate: 16000
+    num_val_samples_to_log: 4
+    model:
+      class_path: src.models.ICMamba
+      init_args:
+        in_channels: 4          # M=4: BCM 채널 제거 (Ablation)
+        out_channels: 64
+        enc_kernel: 256
+        enc_num_feats: 512
+        bot_num_feats: 128
+        d_state: 16
+        d_conv: 4
+        expand: 2
+        num_layers: 8
+        use_checkpoint: true
+
+    loss:
+      class_path: src.modules.losses.CompositeLoss
+      init_args:
+        alpha: 0.1
+
+    optimizer_config:
+      lr: 1e-3
+      weight_decay: 1e-5
+
+trainer:
+  default_root_dir: "results"
+  max_epochs: 50
+  accelerator: "gpu"
+  devices: "auto"
+  strategy: "ddp_find_unused_parameters_true"
+  precision: "16-mixed"
+  log_every_n_steps: 10
+  val_check_interval: 4000
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "Architecture"
+      run_name: "IC-Mamba-4ch-causal-bcm-off"  # BCM Ablation run 식별자
+      tracking_uri: "sqlite:///results/mlflow.db"
+      artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_loss"
+        mode: "min"
+        save_top_k: 1
+        filename: "best-model-{epoch:02d}-{val_loss:.2f}"
+    - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
+      init_args:
+        device_index: 0
+    - class_path: src.callbacks.audio_prediction_writer.AudioPredictionWriter
+      init_args:
+        output_dir: "results/predictions"
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"
+        patience: 10
+        mode: "min"
+        verbose: True
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback
