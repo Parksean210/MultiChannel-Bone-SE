@@ -122,6 +122,8 @@ class SEModule(L.LightningModule):
 
     def on_test_epoch_end(self):
         """테스트 완료 후 MLflow에 최종 집계 메트릭을 summary로 기록합니다."""
+        if not self.trainer.is_global_zero:
+            return
         if not (self.logger and "MLFlowLogger" in str(type(self.logger))):
             return
 
@@ -180,7 +182,7 @@ class SEModule(L.LightningModule):
                 self.logger.experiment.add_audio(f'sample_{i}/Target_Mic0', clean_cpu[i], self.global_step, sample_rate=self.sample_rate)
 
         # MLflow
-        elif self.logger and "MLFlowLogger" in str(type(self.logger)):
+        elif self.logger and "MLFlowLogger" in str(type(self.logger)) and self.trainer.is_global_zero:
             run_id = self.logger.run_id
             for i in range(num_samples):
                 # 메타데이터 파일명 생성
