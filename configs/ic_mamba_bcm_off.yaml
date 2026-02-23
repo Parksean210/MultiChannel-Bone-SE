@@ -57,7 +57,7 @@ trainer:
     init_args:
       experiment_name: "Architecture"
       run_name: "IC-Mamba-4ch-causal-bcm-off"  # BCM Ablation run 식별자
-      tracking_uri: "sqlite:///results/mlflow.db"
+      tracking_uri: "file:./results/mlruns"
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:

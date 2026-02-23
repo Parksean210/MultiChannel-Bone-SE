@@ -25,6 +25,8 @@ class MLflowAutoTagCallback(Callback):
     def setup(self, trainer, pl_module, stage):
         if stage != "fit":
             return
+        if trainer.global_rank != 0:
+            return
         if not hasattr(trainer, 'logger') or not hasattr(trainer.logger, 'run_id'):
             return
 

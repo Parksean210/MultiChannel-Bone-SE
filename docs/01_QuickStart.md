@@ -170,16 +170,10 @@ Epoch 0:  42%|████      | 3300/7857 [05:12<07:10,  10.60it/s, v_num=...,
 별도 터미널에서 MLflow UI를 실행합니다.
 
 ```bash
-nohup uv run mlflow ui \
-    --backend-store-uri sqlite:///results/mlflow.db \
-    --host 0.0.0.0 \
-    --port 5000 \
-    > /dev/null 2>&1 &
-
-echo "MLflow UI: http://localhost:5000"
+bash mlflow_server.sh
 ```
 
-브라우저에서 `http://localhost:5000`에 접속하면 실시간 메트릭과 아티팩트를 확인할 수 있습니다.
+브라우저에서 `http://localhost:6006`에 접속하면 실시간 메트릭과 아티팩트를 확인할 수 있습니다.
 
 ---
 

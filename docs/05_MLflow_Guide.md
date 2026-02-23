@@ -9,7 +9,7 @@
 
 ### 백그라운드로 실행 (권장)
 
-프로젝트 루트의 `mlflow_server.sh` 스크립트를 사용합니다. SQLite 백엔드와 절대경로 artifact 저장소를 자동으로 설정합니다.
+프로젝트 루트의 `mlflow_server.sh` 스크립트를 사용합니다. 파일 백엔드와 상대경로 artifact 저장소를 자동으로 설정합니다.
 
 ```bash
 bash mlflow_server.sh
@@ -20,7 +20,7 @@ WSL2 환경에서는 `localhost` 대신 WSL IP로 접속합니다.
 ```bash
 # WSL IP 확인
 hostname -I | awk '{print $1}'
-# 브라우저: http://<WSL_IP>:5000
+# 브라우저: http://<WSL_IP>:6006
 ```
 
 ### 서버 종료
@@ -33,18 +33,17 @@ pkill -f "mlflow ui"
 
 ```bash
 # 점유 프로세스 확인
-ss -tlnp | grep 5000
+ss -tlnp | grep 6006
 # 다른 포트로 변경 시 mlflow_server.sh 내 --port 값 수정
 ```
 
-### 백엔드: SQLite
+### 백엔드: 파일
 
-`results/mlflow.db` 파일에 모든 실험 메타데이터(메트릭, 파라미터, 태그)가 저장됩니다. 아티팩트(WAV, PNG, YAML)는 `results/mlruns/`에 저장됩니다.
+모든 실험 메타데이터(메트릭, 파라미터, 태그)와 아티팩트(WAV, PNG, YAML)가 `results/mlruns/`에 저장됩니다.
 
 ```
 results/
-├── mlflow.db       ← 메트릭/파라미터/태그 (SQLite)
-└── mlruns/         ← 아티팩트 파일 (WAV, PNG, YAML)
+└── mlruns/         ← 메트릭/파라미터/태그/아티팩트 파일 (WAV, PNG, YAML)
 ```
 
 ---
@@ -68,7 +67,7 @@ trainer:
     init_args:
       experiment_name: "Architecture"      # ← Experiment 지정
       run_name: "IC-Mamba-5ch-causal"      # ← Run 이름
-      tracking_uri: "sqlite:///results/mlflow.db"
+      tracking_uri: "file:./results/mlruns"
 ```
 
 ---
@@ -196,8 +195,7 @@ uv run python scripts/compare_checkpoints.py \
 ### 대량 삭제 (CLI)
 
 ```bash
-# DB 초기화 (실험 데이터 전체 삭제, 복구 불가!)
-rm results/mlflow.db
+# 초기화 (실험 데이터 전체 삭제, 복구 불가!)
 rm -rf results/mlruns/
-# 이후 bash mlflow_server.sh 로 서버 재시작하면 DB 재생성됨
+# 이후 bash mlflow_server.sh 로 서버 재시작하면 자동 재생성됨
 ```
