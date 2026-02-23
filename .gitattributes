@@ -1,0 +1,11 @@
+# 모든 텍스트 파일을 LF로 통일 (WSL/Linux 환경)
+* text=auto eol=lf
+
+# 바이너리 파일은 변환 제외
+*.npy binary
+*.wav binary
+*.pkl binary
+*.pt binary
+*.ckpt binary
+*.png binary
+*.jpg binary
