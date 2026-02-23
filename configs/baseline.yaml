@@ -47,6 +47,5 @@ trainer:
       experiment_name: "Architecture"        # 아키텍처 비교 실험군
       run_name: "Baseline-DummyModel"        # 파이프라인 검증용 기준선
       tracking_uri: "sqlite:///results/mlflow.db"
-      artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
   callbacks:
     - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback  # 자동 태깅

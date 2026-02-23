@@ -56,7 +56,6 @@ trainer:
       experiment_name: "Architecture"        # 아키텍처 비교 실험군 (IC-ConvTasNet vs IC-Mamba 등)
       run_name: "IC-ConvTasNet-5ch-base"     # 명확한 run 식별자
       tracking_uri: "sqlite:///results/mlflow.db"
-      artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
