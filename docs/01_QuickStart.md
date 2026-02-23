@@ -171,7 +171,7 @@ Epoch 0:  42%|████      | 3300/7857 [05:12<07:10,  10.60it/s, v_num=...,
 
 ```bash
 nohup uv run mlflow ui \
-    --backend-store-uri file:./results/mlruns \
+    --backend-store-uri sqlite:///results/mlflow.db \
     --host 0.0.0.0 \
     --port 5000 \
     > /dev/null 2>&1 &

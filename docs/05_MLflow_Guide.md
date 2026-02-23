@@ -69,7 +69,6 @@ trainer:
       experiment_name: "Architecture"      # ← Experiment 지정
       run_name: "IC-Mamba-5ch-causal"      # ← Run 이름
       tracking_uri: "sqlite:///results/mlflow.db"
-      artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
 ```
 
 ---

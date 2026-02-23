@@ -257,7 +257,7 @@ Epoch 5:  62%|██████    | 4872/7857 train_loss_step=6.32, val_loss=7
 ```bash
 # MLflow UI 실행
 nohup uv run mlflow ui \
-    --backend-store-uri file:./results/mlruns \
+    --backend-store-uri sqlite:///results/mlflow.db \
     --host 0.0.0.0 --port 5000 > /dev/null 2>&1 &
 ```
 

@@ -169,8 +169,8 @@ uv run python main.py fit --config configs/ic_mamba.yaml \
     --trainer.devices=1 \
     --trainer.strategy=auto
 
-# 최대 배치 사이즈 탐색
-uv run python scripts/find_max_batch.py
+# 최대 배치 사이즈 탐색 (config 기반)
+uv run python scripts/find_max_batch.py --config configs/ic_mamba.yaml
 ```
 
 ### 추론 및 평가
