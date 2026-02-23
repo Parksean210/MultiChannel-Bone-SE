@@ -1,0 +1,82 @@
+# lightning.pytorch==2.0.0
+seed_everything: 42
+
+data:
+  class_path: src.data.SEDataModule
+  init_args:
+    db_path: "data/metadata.db"
+    batch_size: 12
+    num_workers: 8
+    target_sr: 16000
+
+model:
+  class_path: src.modules.se_module.SEModule
+  init_args:
+    target_type: "aligned_dry"   # Dereverberation
+    sample_rate: 16000
+    num_val_samples_to_log: 4
+    # 1. ICMamba2BCMGuide Model
+    model:
+      class_path: src.models.ICMamba2BCMGuide
+      init_args:
+        in_channels: 5          # M: 마이크 수 (마지막 채널 = BCM)
+        out_channels: 64        # C: 내부 채널 수
+        enc_kernel: 256         # K: 인코더 윈도우 길이
+        enc_num_feats: 512      # F: 인코더 특징 수
+        bot_num_feats: 128      # N: 보틀넥 특징 수 (= Mamba2 d_model)
+        d_state: 128            # Mamba2 SSM 상태 차원 (기본값 128)
+        d_conv: 4               # Mamba2 causal conv 커널 크기
+        expand: 2               # d_inner = expand × bot_num_feats = 256
+        headdim: 64             # Mamba2 멀티헤드 헤드 차원 (256/64=4 heads)
+        num_layers: 8           # Mamba2 레이어 수
+        use_checkpoint: true    # RTX 3080(10GB) 환경 권장. A100/H100에서는 false로 변경.
+
+    # 2. Loss Function
+    loss:
+      class_path: src.modules.losses.CompositeLoss
+      init_args:
+        alpha: 0.1              # Frequency Loss 가중치
+
+    # 3. Optimization
+    optimizer_config:
+      lr: 1e-3
+      weight_decay: 1e-5
+
+trainer:
+  default_root_dir: "results"
+  max_epochs: 5
+  accelerator: "gpu"
+  devices: "auto"
+  strategy: "ddp"
+  precision: "16-mixed"
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 1
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "Architecture"
+      run_name: "ICMamba2-BCMGuide-5ch-causal"
+      tracking_uri: "file:./results/mlruns"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_loss"
+        mode: "min"
+        save_top_k: 1
+        filename: "best-model-{epoch:02d}-{val_loss:.2f}"
+    - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
+      init_args:
+        device_index: 0
+    - class_path: src.callbacks.audio_prediction_writer.AudioPredictionWriter
+      init_args:
+        output_dir: "results/predictions"
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"
+        patience: 10
+        mode: "min"
+        verbose: True
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10
