@@ -181,6 +181,7 @@ def generate_aligned_dry(
 
     ref_rir = rir_tensor[:, ref_mic, ref_source, :]  # (B, L)
     peak_indices = torch.argmax(torch.abs(ref_rir), dim=-1)  # (B,)
+    peak_values = ref_rir[torch.arange(B, device=device), peak_indices]  # (B,) direct path gain
 
     # 벡터화: time_idx - peak로 소스 인덱스 계산
     time_idx = torch.arange(T, device=device).unsqueeze(0).expand(B, -1)  # (B, T)
@@ -191,6 +192,7 @@ def generate_aligned_dry(
 
     aligned = torch.gather(raw_speech, 1, src_idx_clamped)  # (B, T)
     aligned = aligned * valid.float()
+    aligned = aligned * peak_values.view(B, 1)  # direct path amplitude 반영
 
     return aligned.unsqueeze(1)  # (B, 1, T)
 
