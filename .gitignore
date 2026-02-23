@@ -86,3 +86,4 @@ Thumbs.db           # Windows 메타데이터
 # Claude Code instructions (private)
 CLAUDE.md
 **/CLAUDE.md
+.claude/

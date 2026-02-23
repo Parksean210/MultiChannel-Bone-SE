@@ -256,9 +256,7 @@ Epoch 5:  62%|██████    | 4872/7857 train_loss_step=6.32, val_loss=7
 
 ```bash
 # MLflow UI 실행
-nohup uv run mlflow ui \
-    --backend-store-uri file:./results/mlruns \
-    --host 0.0.0.0 --port 5000 > /dev/null 2>&1 &
+bash mlflow_server.sh
 ```
 
-`http://localhost:5000`에서 에폭별 `val_loss`, `val_si_sdr`, `val_pesq` 등을 실시간 확인할 수 있습니다.
+`http://localhost:6006`에서 에폭별 `val_loss`, `val_si_sdr`, `val_pesq` 등을 실시간 확인할 수 있습니다.

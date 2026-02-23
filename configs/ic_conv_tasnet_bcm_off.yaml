@@ -52,17 +52,16 @@ trainer:
   max_epochs: 50
   accelerator: "gpu"
   devices: "auto"
-  strategy: "ddp_find_unused_parameters_true"
+  strategy: "ddp"
   precision: "16-mixed"
   log_every_n_steps: 10
-  val_check_interval: 7857
+  check_val_every_n_epoch: 1
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
       experiment_name: "BCM-Ablation"           # BCM 효과 검증 실험군
       run_name: "IC-ConvTasNet-4ch-no-bcm"      # BCM 없는 4채널 버전
-      tracking_uri: "sqlite:///results/mlflow.db"
-      artifact_location: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
+      tracking_uri: "file:./results/mlruns"
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
@@ -80,3 +79,6 @@ trainer:
         mode: "min"
         verbose: True
     - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10
