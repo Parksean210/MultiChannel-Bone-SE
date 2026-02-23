@@ -49,3 +49,6 @@ trainer:
       tracking_uri: "file:./results/mlruns"
   callbacks:
     - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback  # 자동 태깅
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 1

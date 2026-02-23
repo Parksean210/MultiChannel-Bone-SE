@@ -46,10 +46,10 @@ trainer:
   max_epochs: 50
   accelerator: "gpu"
   devices: "auto"
-  strategy: "ddp_find_unused_parameters_true"
+  strategy: "ddp"
   precision: "16-mixed"
   log_every_n_steps: 10
-  val_check_interval: 7857
+  check_val_every_n_epoch: 1
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
@@ -76,3 +76,6 @@ trainer:
         mode: "min"
         verbose: True
     - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback  # 자동 태깅 (git hash, model_type, config artifact)
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10  # rich 대신 tqdm 강제 사용 (non-TTY 환경 호환)
