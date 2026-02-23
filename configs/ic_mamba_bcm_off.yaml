@@ -48,7 +48,7 @@ trainer:
   max_epochs: 50
   accelerator: "gpu"
   devices: "auto"
-  strategy: "ddp_find_unused_parameters_true"
+  strategy: "ddp"
   precision: "16-mixed"
   log_every_n_steps: 10
   val_check_interval: 4000
