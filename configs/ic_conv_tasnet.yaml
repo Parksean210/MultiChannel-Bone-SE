@@ -46,7 +46,7 @@ trainer:
   max_epochs: 50
   accelerator: "gpu"
   devices: "auto"
-  strategy: "ddp"
+  strategy: "ddp_find_unused_parameters_true"  # use_checkpoint=True와 DDP 호환 필요
   precision: "16-mixed"
   log_every_n_steps: 10
   check_val_every_n_epoch: 1

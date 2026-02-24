@@ -57,6 +57,17 @@ class SEModule(L.LightningModule):
         self.stoi = metrics["stoi"]
         self.pesq = metrics["pesq"]
 
+    def on_save_checkpoint(self, checkpoint: Dict) -> None:
+        """체크포인트에 모델 클래스명과 init args를 저장하여 config 없이 복원 가능하게 합니다."""
+        import inspect
+        checkpoint["model_class_name"] = type(self.model).__name__
+        sig = inspect.signature(type(self.model).__init__)
+        checkpoint["model_init_args"] = {
+            k: getattr(self.model, k)
+            for k in sig.parameters
+            if k != 'self' and hasattr(self.model, k)
+        }
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass. 모델의 in_channels에 맞게 자동 슬라이싱합니다.

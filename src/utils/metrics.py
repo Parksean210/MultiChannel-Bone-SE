@@ -1,7 +1,6 @@
+import os
 import torch
 import torch.nn as nn
-import os
-import sys
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 from torchmetrics.audio import (
@@ -120,24 +119,6 @@ def compute_metrics(
     return results
 
 
-def load_model_from_checkpoint(ckpt_path: str, device: str = "cpu"):
-    """
-    체크포인트에서 SEModule을 로드합니다.
-    LightningCLI가 hyper_parameters에 모델 구조를 저장하므로 별도 감지 불필요.
-
-    Args:
-        ckpt_path: 체크포인트 파일 경로
-        device: 로드할 디바이스
-
-    Returns:
-        SEModule 인스턴스 (eval 모드)
-    """
-    from src.modules.se_module import SEModule
-
-    return SEModule.load_from_checkpoint(
-        ckpt_path, map_location=device
-    ).eval().to(device)
-
 
 def transfer_to_device(batch: Any, device: str) -> Any:
     """배치 내 모든 텐서를 지정된 장치로 재귀적으로 이동합니다."""
@@ -148,6 +129,23 @@ def transfer_to_device(batch: Any, device: str) -> Any:
     if isinstance(batch, list):
         return [transfer_to_device(v, device) for v in batch]
     return batch
+
+
+def load_model_from_checkpoint(ckpt_path: str, device: str = "cpu"):
+    """체크포인트에서 SEModule을 로드합니다. model_class_name은 on_save_checkpoint로 저장됩니다."""
+    from src.modules.se_module import SEModule
+    import src.models as models_module
+    import torch.nn as nn
+
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    class_name = ckpt.get("model_class_name")
+    model_cls = getattr(models_module, class_name)
+
+    model = model_cls(**ckpt["model_init_args"])
+    return SEModule.load_from_checkpoint(
+        ckpt_path, model=model, loss=nn.Identity(),
+        strict=False, map_location=device,
+    ).eval().to(device)
 
 
 @torch.no_grad()
@@ -178,7 +176,7 @@ def compare_models(
     import random
     from torch.utils.data import DataLoader
     from src.data.dataset import SpatialMixingDataset
-    from src.utils.synthesis import apply_spatial_synthesis, create_bcm_kernel
+    from src.utils.synthesis import apply_spatial_synthesis
     from src.utils.audio_io import save_audio_file, build_metadata_filename
 
     # 테스트 샘플 고정
@@ -238,15 +236,15 @@ def compare_models(
                     if ckpt_path == checkpoint_paths[0]:
                         save_audio_file(
                             os.path.join(save_dir, f"input_noisy_{tag}.wav"),
-                            batch["noisy"][0, 0].cpu(), sample_rate
+                            batch["noisy"][0].cpu(), sample_rate, channel=0
                         )
                         save_audio_file(
                             os.path.join(save_dir, f"target_clean_{tag}.wav"),
-                            target[0, 0].cpu(), sample_rate
+                            target[0].cpu(), sample_rate, channel=0
                         )
                     save_audio_file(
                         os.path.join(save_dir, f"output_{model_name}_{tag}.wav"),
-                        est_ch0[0, 0].cpu(), sample_rate
+                        est_ch0[0].cpu(), sample_rate, channel=0
                     )
 
     # 결과 요약 출력
