@@ -52,15 +52,19 @@ def compute_and_log_metrics(
     Returns:
         {metric_name: value} 딕셔너리
     """
+    # STOI/PESQ는 numpy 기반이라 CPU 텐서만 허용
+    _CPU_ONLY = {"stoi", "pesq"}
+
     results = {}
     for name, metric_fn in metric_suite.items():
-        if name == "pesq":
-            try:
-                val = metric_fn(estimated, target)
-            except Exception:
-                val = torch.tensor(1.0, device=estimated.device)
-        else:
-            val = metric_fn(estimated, target)
+        try:
+            if name in _CPU_ONLY:
+                val = metric_fn.cpu()(estimated.cpu(), target.cpu())
+                val = val.to(estimated.device)
+            else:
+                val = metric_fn.to(estimated.device)(estimated, target)
+        except Exception:
+            val = torch.tensor(0.0, device=estimated.device)
         results[name] = val
         module.log(f'{prefix}_{name}', val, on_step=False, on_epoch=True,
                    prog_bar=True, sync_dist=sync_dist, batch_size=batch_size)
@@ -118,7 +122,8 @@ def compute_metrics(
 
 def load_model_from_checkpoint(ckpt_path: str, device: str = "cpu"):
     """
-    체크포인트를 분석하여 적절한 모델과 함께 SEModule을 로드합니다.
+    체크포인트에서 SEModule을 로드합니다.
+    LightningCLI가 hyper_parameters에 모델 구조를 저장하므로 별도 감지 불필요.
 
     Args:
         ckpt_path: 체크포인트 파일 경로
@@ -128,19 +133,9 @@ def load_model_from_checkpoint(ckpt_path: str, device: str = "cpu"):
         SEModule 인스턴스 (eval 모드)
     """
     from src.modules.se_module import SEModule
-    from src.models.ic_conv_tasnet import ICConvTasNet
-    from src.models.baseline import DummyModel
-
-    ckpt = torch.load(ckpt_path, map_location="cpu")
-    state_dict = ckpt.get("state_dict", {})
-
-    # 가중치 키 패턴으로 모델 타입 감지
-    is_ic = any("tcn" in k or "channel_proj" in k for k in state_dict.keys())
-    model = ICConvTasNet(in_channels=5) if is_ic else DummyModel()
 
     return SEModule.load_from_checkpoint(
-        ckpt_path, model=model, loss=nn.Identity(),
-        map_location=device, strict=False
+        ckpt_path, map_location=device
     ).eval().to(device)
 
 
@@ -221,10 +216,10 @@ def compare_models(
                 batch = apply_spatial_synthesis(batch, bcm_kernel=bcm_kernel, sample_rate=sample_rate)
                 est = pl_module(batch["noisy"])
 
-                # 메트릭 계산
+                # 메트릭 계산 (STOI/PESQ는 CPU 연산이므로 CPU로 이동)
                 target = batch['aligned_dry'][:, 0:1, :]
                 est_ch0 = est[:, 0:1, :]
-                metric_vals = compute_metrics(est_ch0, target, sample_rate)
+                metric_vals = compute_metrics(est_ch0.cpu(), target.cpu(), sample_rate)
                 metric_vals.update({
                     "model": model_name,
                     "snr": snr,

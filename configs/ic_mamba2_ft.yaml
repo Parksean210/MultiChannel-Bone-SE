@@ -1,0 +1,64 @@
+# lightning.pytorch==2.0.0
+seed_everything: 42
+
+data:
+  class_path: src.data.SEDataModule
+  init_args:
+    db_path: "data/metadata.db"
+    batch_size: 10 # Optimized for RTX 3080 (10GB) based on find_max_batch.py
+    num_workers: 4
+    target_sr: 16000
+
+model:
+  class_path: src.modules.se_module.SEModule
+  init_args:
+    target_type: "aligned_dry"
+    sample_rate: 16000
+    num_val_samples_to_log: 4
+    model:
+      class_path: src.models.ICMamba2FT
+      init_args:
+        in_channels: 5
+        n_fft: 512
+        hop_length: 128
+        bot_num_feats: 128
+        num_layers: 8
+        d_state: 128
+        headdim: 64
+
+    loss:
+      class_path: src.modules.losses.CompositeLoss
+      init_args:
+        alpha: 0.1
+        use_f_weight: true # 고주파 강화 활성화
+
+    optimizer_config:
+      lr: 1e-3
+      weight_decay: 1e-5
+
+trainer:
+  default_root_dir: "results"
+  max_epochs: 100
+  accelerator: "gpu"
+  devices: "auto"
+  strategy: "auto" # Temporarily use auto/single device to avoid DDP issues
+  precision: "16-mixed"
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 1
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "Architecture"
+      run_name: "ICMamba2FT-5ch-FWeighted"
+      tracking_uri: "file:///home/parksean210/project/speech_enhancement/results/mlruns"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_loss"
+        mode: "min"
+        save_top_k: 1
+        filename: "best-mamba-ft-{epoch:02d}-{val_loss:.2f}"
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10

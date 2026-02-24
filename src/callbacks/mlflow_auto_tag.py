@@ -31,41 +31,41 @@ class MLflowAutoTagCallback(Callback):
             return
 
         run_id = trainer.logger.run_id
-        tracking_uri = getattr(trainer.logger, '_tracking_uri', None) \
-                    or getattr(trainer.logger, 'tracking_uri', None)
-        if tracking_uri:
-            mlflow.set_tracking_uri(tracking_uri)
+        client = trainer.logger.experiment  # This is the MlflowClient
 
-        with mlflow.start_run(run_id=run_id):
-            self._log_git_tags()
-            self._log_model_tags(pl_module)
-            self._log_config_artifacts()
+        # 전역 mlflow 상태를 건드리지 않고, 이미 초기화된 클라이언트를 직접 사용하여 태깅합니다.
+        self._log_git_tags(client, run_id)
+        self._log_model_tags(client, run_id, pl_module)
+        self._log_config_artifacts(client, run_id)
 
-    def _log_git_tags(self):
+    def _log_git_tags(self, client, run_id):
         """git commit hash와 dirty 상태를 태그로 기록합니다."""
         try:
-            commit = subprocess.check_output(
+            # check_output returns bytes in Python 3, so we need to decode
+            commit_bytes = subprocess.check_output(
                 ["git", "rev-parse", "--short", "HEAD"],
                 stderr=subprocess.DEVNULL
-            ).decode().strip()
-            mlflow.set_tag("git_commit", commit)
+            )
+            commit = commit_bytes.decode('utf-8').strip() if isinstance(commit_bytes, bytes) else str(commit_bytes).strip()
+            client.set_tag(run_id, "git_commit", commit)
 
-            status = subprocess.check_output(
+            status_bytes = subprocess.check_output(
                 ["git", "status", "--porcelain"],
                 stderr=subprocess.DEVNULL
-            ).decode().strip()
-            mlflow.set_tag("git_dirty", "true" if status else "false")
+            )
+            status = status_bytes.decode('utf-8').strip() if isinstance(status_bytes, bytes) else str(status_bytes).strip()
+            client.set_tag(run_id, "git_dirty", "true" if status else "false")
         except Exception:
-            mlflow.set_tag("git_commit", "unknown")
+            client.set_tag(run_id, "git_commit", "unknown")
 
-    def _log_model_tags(self, pl_module):
+    def _log_model_tags(self, client, run_id, pl_module):
         """모델 구조 정보를 태그로 기록합니다."""
-        mlflow.set_tag("model_type", type(pl_module.model).__name__)
-        mlflow.set_tag("in_channels", str(pl_module.model.in_channels))
-        mlflow.set_tag("target_type", pl_module.target_type)
-        mlflow.set_tag("sample_rate", str(pl_module.sample_rate))
+        client.set_tag(run_id, "model_type", type(pl_module.model).__name__)
+        client.set_tag(run_id, "in_channels", str(pl_module.model.in_channels))
+        client.set_tag(run_id, "target_type", pl_module.target_type)
+        client.set_tag(run_id, "sample_rate", str(pl_module.sample_rate))
 
-    def _log_config_artifacts(self):
+    def _log_config_artifacts(self, client, run_id):
         """sys.argv에서 --config로 지정된 YAML 파일들을 아티팩트로 저장합니다."""
         args = sys.argv[1:]
         for i, arg in enumerate(args):
@@ -76,4 +76,4 @@ class MLflowAutoTagCallback(Callback):
             else:
                 continue
             if os.path.exists(path):
-                mlflow.log_artifact(path, artifact_path="config")
+                client.log_artifact(run_id, path, artifact_path="config")
