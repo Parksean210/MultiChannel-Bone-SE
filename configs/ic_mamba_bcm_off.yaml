@@ -10,9 +10,6 @@ data:
     batch_size: 4
     num_workers: 8
     target_sr: 16000
-    # BCM 채널 비활성화 → 데이터 배치에 BCM 신호 없이 4ch만 전달
-    mic_config:
-      use_bcm: false
 
 model:
   class_path: src.modules.se_module.SEModule

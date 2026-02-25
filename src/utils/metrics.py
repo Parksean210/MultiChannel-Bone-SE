@@ -183,6 +183,23 @@ def compare_models(
     indices = random.sample(range(len(dataset)), min(num_samples, len(dataset)))
     fixed_meta = [dataset[i] for i in indices]
 
+    from copy import deepcopy
+
+    # 모든 모델이 동일한 raw audio(crop 위치)를 사용하도록 모델 루프 전에 배치를 미리 생성
+    print("Pre-computing fixed batches...")
+    raw_batches: dict = {}
+    for snr in snrs:
+        for i, meta in enumerate(fixed_meta):
+            ds = SpatialMixingDataset(
+                db_path=dataset.engine.url.database,
+                split="test", fixed_snr=snr,
+                speech_id=meta["speech_id"],
+                noise_ids=meta["noise_ids"].tolist(),
+                rir_id=meta["rir_id"]
+            )
+            loader = DataLoader(ds, batch_size=1)
+            raw_batches[(snr, i)] = next(iter(loader))  # CPU에 보관
+
     results = []
 
     for ckpt_path in checkpoint_paths:
@@ -197,16 +214,8 @@ def compare_models(
 
         for snr in snrs:
             for i, meta in enumerate(fixed_meta):
-                # 고정 SNR로 데이터셋 재생성
-                ds = SpatialMixingDataset(
-                    db_path=dataset.engine.url.database,
-                    split="test", fixed_snr=snr,
-                    speech_id=meta["speech_id"],
-                    noise_ids=meta["noise_ids"].tolist(),
-                    rir_id=meta["rir_id"]
-                )
-                loader = DataLoader(ds, batch_size=1)
-                batch = next(iter(loader))
+                # 미리 생성된 배치 재사용 (deepcopy로 모델 간 독립성 보장)
+                batch = deepcopy(raw_batches[(snr, i)])
                 batch = transfer_to_device(batch, device)
 
                 # 합성 + 추론
