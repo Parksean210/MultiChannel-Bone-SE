@@ -1,0 +1,89 @@
+# lightning.pytorch==2.0.0
+seed_everything: 42
+
+data:
+  class_path: src.data.SEDataModule
+  init_args:
+    db_path: "data/metadata.db"
+    batch_size: 4                 #
+    num_workers: 8                #
+    target_sr: 16000              #
+
+model:
+  class_path: src.modules.se_module.SEModule
+  init_args:
+    target_type: "aligned_dry"    #
+    sample_rate: 16000            #
+    num_val_samples_to_log: 4     #
+    
+    # 1. SpatialNet-VQ-Split Model 설정 (변경됨!)
+    model:
+      class_path: src.models.SpatialNet_VQ_Split # 작성한 VQ 모델 클래스 이름으로 변경
+      init_args:
+        in_channels: 5            #
+        out_channels: 1           #
+        n_fft: 512                #
+        hop_length: 256           #
+        num_blocks: 8             #
+        C: 96                     #
+        C_prime: 192              #
+        C_pp: 8                   #
+        
+        # 🟢 VQ (Vector Quantization) 핵심 파라미터 추가
+        latent_dim: 128           # 1차원 압축 크기
+        num_embeddings: 1024      # 코드북 사전의 크기 (1024개 = 10비트)
+
+    # 2. Loss Function
+    loss:
+      class_path: src.modules.losses.CompositeLoss
+      init_args:
+        alpha: 0.1                #
+        use_f_weight: false       #
+
+    # 3. Optimization
+    optimizer_config:
+      lr: 1e-3                    #
+      weight_decay: 1e-5          #
+    scheduler_config:
+      warmup_epochs: 5
+      min_lr: 1e-6
+
+trainer:
+  default_root_dir: "results"     #
+  max_epochs: 50                  #
+  accelerator: "gpu"              #
+  devices: "auto"                 #
+  strategy: "ddp"                 #
+  precision: "16-mixed"           #
+  gradient_clip_val: 5.0
+  log_every_n_steps: 10           #
+  check_val_every_n_epoch: 1      #
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "AR-Glass-Split-Computing"  # 실험 카테고리 변경
+      run_name: "SpatialNet-VQ-Split-10kbps"       # 런 이름 변경
+      tracking_uri: "file:./results/mlruns"        #
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_loss"       #
+        mode: "min"               #
+        save_top_k: 1             #
+        filename: "best-vq-spatialnet-{epoch:02d}-{val_loss:.2f}" # 파일명 변경
+    - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
+      init_args:
+        device_index: 0           #
+    - class_path: src.callbacks.audio_prediction_writer.AudioPredictionWriter
+      init_args:
+        output_dir: "results/predictions"          #
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"       #
+        patience: 10              #
+        mode: "min"               #
+        verbose: True             #
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback #
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10          #

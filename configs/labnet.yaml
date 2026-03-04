@@ -1,63 +1,61 @@
 # lightning.pytorch==2.0.0
-# BCM Ablation: BCM 채널 없이 4채널(M=4)만 사용.
-# ic_mamba.yaml과의 차이: in_channels=4, run_name, mic_config.use_bcm=false
 seed_everything: 42
 
 data:
   class_path: src.data.SEDataModule
   init_args:
     db_path: "data/metadata.db"
-    batch_size: 4
+    batch_size: 16  # LABNet이 가볍기 때문에 배치 키움 (52K params, 316M MACs)
     num_workers: 8
     target_sr: 16000
 
 model:
   class_path: src.modules.se_module.SEModule
   init_args:
-    target_type: "aligned_dry"
+    target_type: "aligned_dry"  # Dereverberation
     sample_rate: 16000
     num_val_samples_to_log: 4
+    # 1. Define the LABNet Model
     model:
-      class_path: src.models.ICMamba
+      class_path: src.models.LABNet
       init_args:
-        in_channels: 4          # M=4: BCM 채널 제거 (Ablation)
-        out_channels: 64
-        enc_kernel: 256
-        enc_num_feats: 512
-        bot_num_feats: 128
-        d_state: 16
-        d_conv: 4
-        expand: 2
-        num_layers: 8
-        use_checkpoint: true
+        in_channels: 5       # air 4ch + BCM 1ch
+        d: 32                # hidden dim (논문 원본보다 약간 크게)
+        gru_hidden: 24       # GRU hidden size (논문 기준)
+        num_heads: 4         # CCA attention heads
+        n_fft: 512           # 프로젝트 기본값
+        hop_length: 256      # 프로젝트 기본값
+        win_length: 512
 
+    # 2. Define the Loss Function
     loss:
       class_path: src.modules.losses.CompositeLoss
       init_args:
-        alpha: 0.1
+        alpha: 0.1  # Weight for Frequency Loss
 
+    # 3. Optimization Settings
     optimizer_config:
-      lr: 1e-3
-      weight_decay: 1e-5
+      lr: 5e-4       # 논문(LABNet) AdamW 기준
+      weight_decay: 1e-2
     scheduler_config:
       warmup_epochs: 5
       min_lr: 1e-6
 
 trainer:
   default_root_dir: "results"
-  max_epochs: 50
+  max_epochs: 100           # 논문 기준 100 epochs
   accelerator: "gpu"
   devices: "auto"
-  strategy: "ddp"
+  strategy: "ddp"           # use_checkpoint 없으므로 일반 ddp
   precision: "16-mixed"
-  gradient_clip_val: 5.0
+  gradient_clip_val: 5.0    # 논문 동일
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
       experiment_name: "Architecture"
-      run_name: "IC-Mamba-4ch-causal-bcm-off"  # BCM Ablation run 식별자
+      run_name: "LABNet-5ch-d32"
       tracking_uri: "file:./results/mlruns"
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint

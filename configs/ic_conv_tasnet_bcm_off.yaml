@@ -46,6 +46,9 @@ model:
     optimizer_config:
       lr: 1e-3
       weight_decay: 1e-5
+    scheduler_config:
+      warmup_epochs: 5
+      min_lr: 1e-6
 
 trainer:
   default_root_dir: "results"
@@ -54,6 +57,7 @@ trainer:
   devices: "auto"
   strategy: "ddp_find_unused_parameters_true"  # use_checkpoint=True와 DDP 호환 필요
   precision: "16-mixed"
+  gradient_clip_val: 5.0
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
   logger:

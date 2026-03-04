@@ -1,6 +1,4 @@
 # lightning.pytorch==2.0.0
-# BCM Ablation: BCM 채널 없이 4채널(M=4)만 사용.
-# ic_mamba.yaml과의 차이: in_channels=4, run_name, mic_config.use_bcm=false
 seed_everything: 42
 
 data:
@@ -17,24 +15,31 @@ model:
     target_type: "aligned_dry"
     sample_rate: 16000
     num_val_samples_to_log: 4
+
+    # SpatialNet-FSQ-Split: AR Glass ↔ Mobile Phone split computing
+    # Glass: STFT + InputConv + CrossBandBlock[0] + FSQ encode
+    # BT:    512 indices × 3 bits = 1536 bits/frame = 96kbps @ 62.5fps
+    # Phone: FSQ decode + CausalNarrowBandBlock[0] + Blocks[1:7] + iSTFT
     model:
-      class_path: src.models.ICMamba
+      class_path: src.models.SpatialNetFSQSplit
       init_args:
-        in_channels: 4          # M=4: BCM 채널 제거 (Ablation)
-        out_channels: 64
-        enc_kernel: 256
-        enc_num_feats: 512
-        bot_num_feats: 128
-        d_state: 16
-        d_conv: 4
-        expand: 2
-        num_layers: 8
-        use_checkpoint: true
+        in_channels: 5
+        out_channels: 1
+        n_fft: 512
+        hop_length: 256
+        num_blocks: 8
+        C: 96
+        C_prime: 192
+        C_pp: 8
+        fsq_dim: 512           # 512 dims × [8] levels (3 bits) = 1536 bits/frame
+        # fsq_levels: null     # 기본값 [8]*512, 생략 시 자동 설정
+        dropout: 0.1
 
     loss:
       class_path: src.modules.losses.CompositeLoss
       init_args:
         alpha: 0.1
+        use_f_weight: false
 
     optimizer_config:
       lr: 1e-3
@@ -56,8 +61,8 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
-      experiment_name: "Architecture"
-      run_name: "IC-Mamba-4ch-causal-bcm-off"  # BCM Ablation run 식별자
+      experiment_name: "AR-Glass-Split-Computing"
+      run_name: "SpatialNet-FSQ-Split-96kbps"
       tracking_uri: "file:./results/mlruns"
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
@@ -65,7 +70,7 @@ trainer:
         monitor: "val_loss"
         mode: "min"
         save_top_k: 1
-        filename: "best-model-{epoch:02d}-{val_loss:.2f}"
+        filename: "best-fsq-spatialnet-{epoch:02d}-{val_loss:.2f}"
     - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
       init_args:
         device_index: 0

@@ -176,7 +176,7 @@ class BaseSEModel(nn.Module):
         # Crop to original length
         res = combined.view(B, C, -1)
         if center:
-            res = res[:, :, pad_amount : pad_amount + (length if length else T)]
+            res = res[:, :, pad_amount : pad_amount + (length if length else current_len - 2 * pad_amount)]
         elif length:
             res = res[:, :, :length]
             

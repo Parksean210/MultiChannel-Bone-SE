@@ -36,7 +36,13 @@
       "\\home\\parksean210\\project\\speech_enhancement\\configs",
       "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\configs",
       "\\home\\parksean210\\project\\speech_enhancement\\scripts",
-      "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\scripts"
+      "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\scripts",
+      "\\home\\parksean210\\project\\speech_enhancement\\src\\modules",
+      "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\src\\modules",
+      "\\home\\parksean210\\project\\speech_enhancement\\src\\models",
+      "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\src\\models",
+      "\\home\\parksean210\\project\\speech_enhancement\\src\\utils",
+      "\\\\wsl.localhost\\Ubuntu\\home\\parksean210\\project\\speech_enhancement\\src\\utils"
     ]
   }
 }

@@ -1,41 +1,42 @@
 # lightning.pytorch==2.0.0
-# BCM Ablation: BCM 채널 없이 4채널(M=4)만 사용.
-# ic_mamba.yaml과의 차이: in_channels=4, run_name, mic_config.use_bcm=false
 seed_everything: 42
 
 data:
   class_path: src.data.SEDataModule
   init_args:
     db_path: "data/metadata.db"
-    batch_size: 4
+    batch_size: 4                 # SpatialNet은 메모리 소모가 크므로 배치 사이즈 축소
     num_workers: 8
     target_sr: 16000
 
 model:
   class_path: src.modules.se_module.SEModule
   init_args:
-    target_type: "aligned_dry"
+    target_type: "aligned_dry"    # 잔향 제거(Dereverberation) 타겟
     sample_rate: 16000
     num_val_samples_to_log: 4
+    
+    # 1. SpatialNet-Small Model 설정
     model:
-      class_path: src.models.ICMamba
+      class_path: src.models.SpatialNet # 작성한 SpatialNet 클래스 경로
       init_args:
-        in_channels: 4          # M=4: BCM 채널 제거 (Ablation)
-        out_channels: 64
-        enc_kernel: 256
-        enc_num_feats: 512
-        bot_num_feats: 128
-        d_state: 16
-        d_conv: 4
-        expand: 2
-        num_layers: 8
-        use_checkpoint: true
+        in_channels: 5            # M: 마이크 수 (예: AR Glass 6채널 어레이)
+        out_channels: 1           # P: 타겟 화자 수
+        n_fft: 512                # 16kHz 기준 32ms 윈도우 
+        hop_length: 256           # 16ms 이동 간격 
+        num_blocks: 8             # L: 반복 블록 수 (Small 버전) [cite: 290]
+        C: 96                     # 기본 Hidden 차원 [cite: 291]
+        C_prime: 192              # T-ConvFFN 내부 확장 차원 [cite: 291]
+        C_pp: 8                   # Full-band 모듈 압축 차원 [cite: 291]
 
+    # 2. Loss Function (논문의 근본과 실전 타협점)
     loss:
       class_path: src.modules.losses.CompositeLoss
       init_args:
-        alpha: 0.1
+        alpha: 0.1                # SI-SDR + 0.1 * MR-STFT
+        use_f_weight: false
 
+    # 3. Optimization
     optimizer_config:
       lr: 1e-3
       weight_decay: 1e-5
@@ -49,7 +50,7 @@ trainer:
   accelerator: "gpu"
   devices: "auto"
   strategy: "ddp"
-  precision: "16-mixed"
+  precision: "16-mixed"           # 메모리 절약을 위한 Mixed Precision
   gradient_clip_val: 5.0
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
@@ -57,7 +58,7 @@ trainer:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
       experiment_name: "Architecture"
-      run_name: "IC-Mamba-4ch-causal-bcm-off"  # BCM Ablation run 식별자
+      run_name: "SpatialNet-Small-5ch"
       tracking_uri: "file:./results/mlruns"
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
@@ -65,7 +66,7 @@ trainer:
         monitor: "val_loss"
         mode: "min"
         save_top_k: 1
-        filename: "best-model-{epoch:02d}-{val_loss:.2f}"
+        filename: "best-spatialnet-{epoch:02d}-{val_loss:.2f}"
     - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
       init_args:
         device_index: 0

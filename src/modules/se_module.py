@@ -24,6 +24,7 @@ class SEModule(L.LightningModule):
                  model: torch.nn.Module,
                  loss: torch.nn.Module,
                  optimizer_config: Dict[str, Any] = {"lr": 1e-3, "weight_decay": 0.0},
+                 scheduler_config: Dict[str, Any] = {"warmup_epochs": 5, "min_lr": 1e-6},
                  target_type: str = "spatialized",
                  sample_rate: int = 16000,
                  num_val_samples_to_log: int = 4):
@@ -32,6 +33,7 @@ class SEModule(L.LightningModule):
             model: 음성 향상을 수행할 신경망 모델 (BaseSEModel 자식 클래스)
             loss: 손실 함수 (예: CompositeLoss)
             optimizer_config: 학습률(lr) 및 가중치 감쇠(weight_decay) 설정
+            scheduler_config: LR 스케줄러 설정 (warmup_epochs, min_lr)
             target_type: 정답 데이터 종류 ("spatialized": 잔향 포함, "aligned_dry": 잔향 제거)
             sample_rate: 오디오 샘플 레이트
             num_val_samples_to_log: 검증 시 로깅할 오디오 샘플 수
@@ -42,6 +44,7 @@ class SEModule(L.LightningModule):
         self.model = model
         self.loss = loss
         self.optimizer_config = optimizer_config
+        self.scheduler_config = scheduler_config
         self.target_type = target_type
         self.sample_rate = sample_rate
         self.num_val_samples_to_log = num_val_samples_to_log
@@ -113,15 +116,15 @@ class SEModule(L.LightningModule):
         compute_and_log_metrics(self, metric_suite, est_ch0, target, prefix="val",
                                 batch_size=batch_size, sync_dist=True)
 
-        # 에폭의 첫 번째 배치에 대해 오디오 샘플 로깅
-        if batch_idx == 0:
+        # 에폭의 첫 번째 배치에 대해 오디오 샘플 로깅 (DDP: rank 0에서만 수행)
+        if batch_idx == 0 and self.trainer.is_global_zero:
             target_to_log = batch['aligned_dry'] if self.target_type == "aligned_dry" else batch['clean']
             self.log_audio_samples(batch['noisy'], target_to_log, est_clean, batch=batch)
 
     def test_step(self, batch, batch_idx):
         """테스트 단계 루프."""
         batch = self._apply_gpu_synthesis(batch)
-        target = batch['aligned_dry'][:, 0:1, :]
+        target = self._select_target(batch)
         est_clean = self(batch['noisy'])
         est_ch0 = est_clean[:, 0:1, :]
 
@@ -226,22 +229,33 @@ class SEModule(L.LightningModule):
                         self.logger.experiment.log_artifact(run_id, spec_path, artifact_path=f"audio_samples/sample_{i}")
 
     def configure_optimizers(self):
-        """AdamW + ReduceLROnPlateau 설정."""
+        """AdamW + Linear Warmup + CosineAnnealing 설정."""
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.optimizer_config.get('lr', 1e-3),
             weight_decay=self.optimizer_config.get('weight_decay', 0.0)
         )
 
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5
+        warmup_epochs = self.scheduler_config.get('warmup_epochs', 5)
+        min_lr = self.scheduler_config.get('min_lr', 1e-6)
+        max_epochs = self.trainer.max_epochs or 50
+
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1e-2, end_factor=1.0, total_iters=warmup_epochs
+        )
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max_epochs - warmup_epochs, eta_min=min_lr
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[warmup_epochs],
         )
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "monitor": "val_loss",
                 "interval": "epoch",
                 "frequency": 1,
             },

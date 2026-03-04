@@ -10,7 +10,7 @@
 ```
 [Disk]
   │  (CPU — Dataset.__getitem__)
-  │  파일 로드 + 랜덤 크롭 + 패딩
+  │  파일 로드 + 랜덤 크롭 + 패딩 + Data Augmentation (train only)
   ▼
 [DataLoader]  ← num_workers로 병렬 프리페치
   │  (GPU — src/utils/synthesis.py)
@@ -28,17 +28,28 @@
 
 **위치**: `src/data/dataset.py` — `SpatialMixingDataset.__getitem__`
 
-디스크에서 "재료"를 꺼내오는 단계입니다. 무거운 연산은 일절 하지 않습니다.
+디스크에서 "재료"를 꺼내오는 단계입니다. 랜덤 크롭 후 Data Augmentation을 적용합니다 (train split에서만).
 
 ### 로드하는 데이터
 
 | 데이터 | Shape | 설명 |
 |---|---|---|
-| `raw_speech` | `(T,)` | 클린 음성 모노 파형. 랜덤 크롭하여 3초(48,000 샘플) 고정 |
+| `raw_speech` | `(T,)` | 클린 음성 모노 파형. 랜덤 크롭 + 증강(train) 후 3초(48,000 샘플) 고정 |
 | `raw_noises` | `(S_max-1, T)` | 소음 파형 묶음. 미사용 슬롯은 무음(0) 패딩 |
 | `rir_tensor` | `(M, S_max, L)` | Room Impulse Response. 미사용 소스 슬롯은 0 패딩 |
 | `snr` | `float` | 이 샘플에 적용할 목표 SNR (dB) |
 | `mic_config` | `dict` | BCM 사용 여부, 컷오프 주파수, 감쇄량 등 |
+
+### Data Augmentation (train only)
+
+`raw_speech`에 대해 공간화 이전에 CPU에서 데이터 증강을 적용합니다. SNR 스케일링은 증강 후 공간화된 신호의 RMS로 계산하므로, 증강이 SNR 정확도에 영향을 주지 않습니다.
+
+| 증강 | 확률 | 범위 | 설명 |
+|---|---|---|---|
+| Speed Perturbation | 50% | 0.9x ~ 1.1x | 발화 속도/음높이 변동 시뮬레이션 |
+| Gain Augmentation | 50% | -6 ~ +6 dB | 볼륨 변동 시뮬레이션 |
+
+증강 후 `clamp(-1.0, 1.0)`으로 클리핑을 방지합니다.
 
 **배치 구성 (DataLoader)**: 모든 텐서가 고정 크기이므로 `default_collate`로 자연스럽게 배치됩니다.
 
