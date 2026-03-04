@@ -20,12 +20,13 @@ class SpatialMixingDataset(Dataset):
     고속 공간 합성(Spatial Mixing) 학습을 위한 데이터셋 클래스.
     SQLite 기반 메타데이터 조회와 .npy 메모리 맵핑(mmap)을 통한 초고속 데이터 로딩을 지원합니다.
     """
-    def __init__(self, db_path: str, target_sr: int = 16000, split: str = "train", 
-                 snr_range: tuple = (-5, 20), chunk_size: int = 48000, 
-                 speech_id: Optional[int] = None, 
+    def __init__(self, db_path: str, target_sr: int = 16000, split: str = "train",
+                 snr_range: tuple = (-5, 20), chunk_size: int = 48000,
+                 speech_id: Optional[int] = None,
                  noise_ids: Optional[List[int]] = None,
                  rir_id: Optional[int] = None,
-                 fixed_snr: Optional[float] = None):
+                 fixed_snr: Optional[float] = None,
+                 augment: bool = True):
         """
         Args:
             db_path: SQLite 메타데이터 데이터베이스 경로
@@ -37,6 +38,7 @@ class SpatialMixingDataset(Dataset):
             noise_ids: 특정 노이즈 파일 ID 고를 리스트 (여러 개 지정 가능)
             rir_id: 특정 RIR 파일 ID 필터링
             fixed_snr: 고정 SNR 값
+            augment: 학습 시 데이터 증강 적용 여부 (train split에서만 동작)
         """
         self.engine = create_db_engine(db_path)
         self.target_sr = target_sr
@@ -44,6 +46,7 @@ class SpatialMixingDataset(Dataset):
         self.snr_range = snr_range
         self.chunk_size = chunk_size
         self.fixed_snr = fixed_snr
+        self.augment = augment and (split == "train")
 
         # 데이터베이스 커넥션 병목 현상을 방지하기 위해 초기화 시점에 전체 경로를 메모리에 캐싱
         with Session(self.engine) as session:
@@ -208,6 +211,33 @@ class SpatialMixingDataset(Dataset):
                 noise_wav = torch.cat([noise_wav, extra_wav], dim=0)
             return noise_wav[:target_samples], noise_id
     
+    def _apply_augmentation(self, waveform: torch.Tensor) -> torch.Tensor:
+        """
+        학습용 데이터 증강. raw audio(공간화 이전)에 적용하여 SNR 계산에 영향 없음.
+        - Speed perturbation: 0.9~1.1x (음높이/발화 속도 변동)
+        - Gain augmentation: -6~+6 dB (볼륨 변동)
+        """
+        # Speed perturbation (p=0.5)
+        if random.random() < 0.5:
+            speed_factor = random.uniform(0.9, 1.1)
+            orig_len = waveform.shape[0]
+            waveform = F_audio.speed(waveform.unsqueeze(0), self.target_sr, speed_factor)[0].squeeze(0)
+            # chunk_size에 맞게 길이 보정
+            if waveform.shape[0] > orig_len:
+                waveform = waveform[:orig_len]
+            elif waveform.shape[0] < orig_len:
+                waveform = F.pad(waveform, (0, orig_len - waveform.shape[0]))
+
+        # Gain augmentation (p=0.5)
+        if random.random() < 0.5:
+            gain_db = random.uniform(-6.0, 6.0)
+            waveform = waveform * (10 ** (gain_db / 20.0))
+
+        # 클리핑 방지
+        waveform = waveform.clamp(-1.0, 1.0)
+
+        return waveform
+
     def _apply_rir(self, audio, rirs, target_len): pass # Deprecated for GPU
     def _get_aligned_dry(self, audio, rirs, target_len): pass # Deprecated for GPU
     def _apply_bcm_modeling(self, audio, mic_config): pass # Deprecated for GPU
@@ -231,6 +261,10 @@ class SpatialMixingDataset(Dataset):
                 # 3초보다 짧은 경우 부족한 뒷부분을 0으로 채움 (Zero Padding)
                 clean_mono = F.pad(clean_mono, (0, self.chunk_size - L))
         
+        # Data Augmentation (train split에서만, 공간화 이전에 적용)
+        if self.augment:
+            clean_mono = self._apply_augmentation(clean_mono)
+
         target_len = clean_mono.shape[0]
 
         # 2. RIR(공간 정보) 무작위 추출 및 캐시 로드

@@ -9,10 +9,15 @@
 
 ```
 src/models/
-├── base.py               ← BaseSEModel (모든 모델의 부모 클래스)
-├── ic_mamba.py           ← ICMamba (mamba-ssm CUDA 커널, causal) ← 메인
-├── ic_conv_tasnet.py     ← ICConvTasNet (Dilated TCN 기반, 비교용)
-└── baseline.py           ← DummyModel (파이프라인 검증용)
+├── base.py                    ← BaseSEModel (모든 모델의 부모 클래스)
+├── ic_mamba.py                ← ICMamba (mamba-ssm CUDA 커널, causal)
+├── ic_mamba2_bcm_guide.py     ← ICMamba2BCMGuide (Mamba2 + BCM 가이드 어텐션)
+├── ic_mamba2_bcm_guide_v2.py  ← ICMamba2BCMGuideV2 (Mamba2 + FiLM 컨디셔닝)
+├── ic_mamba2_ft.py            ← ICMamba2FT (파인튜닝 래퍼)
+├── ic_conv_tasnet.py          ← ICConvTasNet (Dilated TCN 기반)
+├── spatial_net.py             ← SpatialNet (CrossBand + NarrowBand 블록)
+├── spatial_net_fsq_split.py   ← SpatialNetFSQSplit (FSQ Split Computing)
+└── baseline.py                ← DummyModel (파이프라인 검증용)
 ```
 
 **SEModule**(`src/modules/se_module.py`)은 `model.in_channels`만 참조합니다. `BaseSEModel`을 상속하면 나머지는 자동으로 연결됩니다.
@@ -217,6 +222,9 @@ model:
     optimizer_config:
       lr: 1e-3
       weight_decay: 1e-5
+    scheduler_config:
+      warmup_epochs: 5
+      min_lr: 1e-6
 trainer:
   logger:
     init_args:

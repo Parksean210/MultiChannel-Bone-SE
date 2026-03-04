@@ -1,4 +1,5 @@
 import os
+import logging
 import torch
 import torch.nn as nn
 from pathlib import Path
@@ -9,6 +10,8 @@ from torchmetrics.audio import (
 )
 from torchmetrics.audio.stoi import ShortTimeObjectiveIntelligibility as STOI
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality as PESQ
+
+logger = logging.getLogger(__name__)
 
 
 def create_metric_suite(sample_rate: int = 16000) -> Dict[str, nn.Module]:
@@ -62,8 +65,9 @@ def compute_and_log_metrics(
                 val = val.to(estimated.device)
             else:
                 val = metric_fn.to(estimated.device)(estimated, target)
-        except Exception:
-            val = torch.tensor(0.0, device=estimated.device)
+        except Exception as e:
+            logger.warning(f"{prefix}_{name} computation failed: {e}")
+            continue  # 실패한 메트릭은 로깅하지 않고 스킵
         results[name] = val
         module.log(f'{prefix}_{name}', val, on_step=False, on_epoch=True,
                    prog_bar=True, sync_dist=sync_dist, batch_size=batch_size)
@@ -93,8 +97,6 @@ def compute_metrics(
         metrics = ["si_sdr", "sdr", "stoi", "pesq"]
 
     # shape 정규화: (B, 1, T)
-    for t in [estimated, target]:
-        pass  # shape 체크용
     if estimated.dim() == 1:
         estimated = estimated.unsqueeze(0).unsqueeze(0)
         target = target.unsqueeze(0).unsqueeze(0)
@@ -108,13 +110,11 @@ def compute_metrics(
     for name in metrics:
         if name not in suite:
             continue
-        if name == "pesq":
-            try:
-                results[name] = suite[name](estimated, target).item()
-            except Exception:
-                results[name] = 1.0
-        else:
+        try:
             results[name] = suite[name](estimated, target).item()
+        except Exception as e:
+            logger.warning(f"{name} computation failed: {e}")
+            results[name] = float('nan')
 
     return results
 
@@ -268,11 +268,15 @@ def compare_models(
         for r in results:
             grouped[(r['model'], r['snr'])].append(r)
 
+        def _nanmean(values):
+            valid = [v for v in values if v == v]  # NaN != NaN
+            return sum(valid) / len(valid) if valid else float('nan')
+
         for (model, snr_val), items in sorted(grouped.items()):
-            avg_si = sum(x.get('si_sdr', 0) for x in items) / len(items)
-            avg_sdr = sum(x.get('sdr', 0) for x in items) / len(items)
-            avg_stoi = sum(x.get('stoi', 0) for x in items) / len(items)
-            avg_pesq = sum(x.get('pesq', 0) for x in items) / len(items)
+            avg_si = _nanmean([x.get('si_sdr', float('nan')) for x in items])
+            avg_sdr = _nanmean([x.get('sdr', float('nan')) for x in items])
+            avg_stoi = _nanmean([x.get('stoi', float('nan')) for x in items])
+            avg_pesq = _nanmean([x.get('pesq', float('nan')) for x in items])
             print(f"{model:<30} {snr_val:>5.0f} {avg_si:>8.2f} {avg_sdr:>8.2f} {avg_stoi:>6.3f} {avg_pesq:>6.2f}")
 
     return results

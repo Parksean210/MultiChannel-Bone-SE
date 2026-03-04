@@ -119,6 +119,9 @@ model:
     optimizer_config:
       lr: 1e-3
       weight_decay: 1e-5
+    scheduler_config:
+      warmup_epochs: 5
+      min_lr: 1e-6
 ```
 
 ### trainer 섹션
@@ -130,6 +133,7 @@ trainer:
   devices: "auto"                 # 사용 가능한 GPU 자동 감지
   strategy: "ddp_find_unused_parameters_true"  # 단일 GPU: "auto"
   precision: "16-mixed"           # 메모리 절약. A100: "bf16-mixed" 권장
+  gradient_clip_val: 5.0          # Gradient Norm Clipping
   log_every_n_steps: 10
   val_check_interval: 7857        # N 스텝마다 검증 (7857 ≈ 1 epoch)
 ```
@@ -210,13 +214,39 @@ uv run python main.py fit \
     verbose: True
 ```
 
-### Adaptive Learning Rate (ReduceLROnPlateau)
+### Learning Rate Schedule (Linear Warmup + Cosine Annealing)
 
-`val_loss`가 5 에폭 정체되면 학습률을 0.5배로 감소시킵니다. `SEModule.configure_optimizers`에서 자동으로 설정됩니다.
+초기 학습 불안정을 방지하기 위해 **Linear Warmup** 후 **Cosine Annealing**으로 학습률을 감소시킵니다.
+`SEModule.configure_optimizers`에서 자동으로 설정됩니다.
 
-```python
-# SEModule.configure_optimizers (코드 수정 불필요)
-scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+```
+LR
+ ↑
+ │    ╱‾‾‾‾╲
+ │   ╱      ╲
+ │  ╱        ╲
+ │ ╱          ╲___
+ │╱                ╲___
+ └──────────────────────→ Epoch
+   Warmup    Cosine Annealing
+  (5 epoch)  (나머지 epoch)
+```
+
+YAML에서 `scheduler_config`로 제어합니다:
+
+```yaml
+scheduler_config:
+  warmup_epochs: 5    # 워밍업 에폭 수
+  min_lr: 1e-6        # 최소 학습률 (Cosine 하한)
+```
+
+### Gradient Clipping
+
+학습 안정성을 위해 Gradient Norm Clipping을 적용합니다. Trainer 설정에 포함됩니다:
+
+```yaml
+trainer:
+  gradient_clip_val: 5.0   # Max gradient norm
 ```
 
 ---
