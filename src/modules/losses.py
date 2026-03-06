@@ -499,6 +499,84 @@ class AWeightedSTFTLoss(nn.Module):
         return sc_loss + mag_loss
 
 
+class LABNetLoss(nn.Module):
+    """
+    LABNet/LiSenNet 논문 손실 함수.
+    LiSenNet (Yan et al., 2024) §II.F 기준:
+      L = λ1 * L_mag + λ2 * L_comp
+    where:
+      L_mag  = MSE(|Y|^c, |Ŷ|^c)           -- power-compressed magnitude MSE
+      L_comp = MSE(|Y|^c·e^(jφy), |Ŷ|^c·e^(jφŷ)) -- power-compressed complex MSE
+
+    Waveform 입력을 받아 내부에서 STFT → power-compress → loss 계산.
+    """
+    def __init__(self,
+                 n_fft: int = 512,
+                 hop_length: int = 256,
+                 win_length: int = 512,
+                 compress_factor: float = 0.3,
+                 lambda_mag: float = 0.9,
+                 lambda_comp: float = 0.1):
+        """
+        Args:
+            n_fft: FFT 크기
+            hop_length: Hop 크기
+            win_length: 윈도우 길이
+            compress_factor: 파워 압축 비율 (c=0.3)
+            lambda_mag: L_mag 가중치 (논문 0.9)
+            lambda_comp: L_comp 가중치 (논문 0.1)
+        """
+        super().__init__()
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.win_length = win_length
+        self.compress_factor = compress_factor
+        self.lambda_mag = lambda_mag
+        self.lambda_comp = lambda_comp
+        self.register_buffer('window', torch.hann_window(win_length))
+
+    def _stft(self, x: torch.Tensor) -> torch.Tensor:
+        """(N, T) -> (N, F, T_spec) complex"""
+        return torch.stft(
+            x, self.n_fft, self.hop_length, self.win_length,
+            self.window, return_complex=True, center=True,
+        )
+
+    def forward(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            preds: 모델 추정 파형 (B, C, T) 또는 (B, T)
+            targets: 클린 참조 파형 (B, C, T) 또는 (B, T)
+        Returns:
+            loss = λ1 * L_mag + λ2 * L_comp
+        """
+        if preds.dim() == 3:
+            B, C, T = preds.shape
+            preds = preds.view(B * C, T)
+            targets = targets.view(B * C, T)
+
+        # STFT
+        pred_spec = self._stft(preds)        # (N, F, T_spec) complex
+        target_spec = self._stft(targets)
+
+        # Magnitude + power compression
+        pred_mag = pred_spec.abs().clamp(min=1e-10).pow(self.compress_factor)
+        target_mag = target_spec.abs().clamp(min=1e-10).pow(self.compress_factor)
+
+        # L_mag: MSE on power-compressed magnitude
+        loss_mag = F.mse_loss(pred_mag, target_mag)
+
+        # Power-compressed complex spectrum: |X|^c * e^(jφ)
+        pred_comp = pred_mag * torch.exp(1j * pred_spec.angle())
+        target_comp = target_mag * torch.exp(1j * target_spec.angle())
+
+        # L_comp: MSE on power-compressed complex (real + imag)
+        loss_comp = F.mse_loss(pred_comp.real, target_comp.real) + \
+                    F.mse_loss(pred_comp.imag, target_comp.imag)
+
+        return self.lambda_mag * loss_mag + self.lambda_comp * loss_comp
+
+
 class CompositeLoss(nn.Module):
     """
     복합 손실 함수 (Hybrid Loss).

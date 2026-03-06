@@ -7,3 +7,4 @@ from .ic_mamba2_bcm_guide_v2 import ICMamba2BCMGuideV2
 from .ic_mamba2_ft import ICMamba2FT
 from .spatial_net import SpatialNet
 from .spatial_net_fsq_split import SpatialNetFSQSplit
+from .labnet import LABNet
