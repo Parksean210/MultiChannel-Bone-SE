@@ -97,7 +97,7 @@ class SEModule(L.LightningModule):
         loss = self.loss(est_clean[:, 0:1, :], target)
 
         batch_size = batch['noisy'].shape[0]
-        self.log('train_loss', loss, on_step=True, on_epoch=False, prog_bar=True, batch_size=batch_size)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
         return loss
 
     def validation_step(self, batch, batch_idx):
