@@ -1,0 +1,97 @@
+# lightning.pytorch==2.0.0
+seed_everything: 42
+
+data:
+  class_path: src.data.SEDataModule
+  init_args:
+    db_path: "data/metadata.db"
+    batch_size: 1 # MetricGAN은 PESQ 계산 부하가 있으므로 적절한 배치 사이즈 설정
+    num_workers: 8
+    target_sr: 16000
+
+model:
+  class_path: src.modules.metricgan_module.MetricGAN_SEModule
+  init_args:
+    target_type: "aligned_dry"
+    sample_rate: 16000
+    num_val_samples_to_log: 4
+    adv_weight: 0.1      # Adversarial loss 가중치
+    random_channel_aug: true  # 원본 ABNet과 동일: 매 스텝 1~C 채널 랜덤 선택
+    pesq_async: true          # PESQ CPU 연산을 G update GPU 연산과 병렬 실행
+    
+    # 1. Generator (LABNet)
+    model:
+      class_path: src.models.LABNet
+      init_args:
+        in_channels: 5
+        num_channels: 16
+        n_fft: 512
+        hop_length: 256
+        win_length: 512
+        compress_factor: 0.3
+
+    # 2. Discriminator
+    discriminator:
+      class_path: src.models.discriminator.MetricDiscriminator
+      init_args:
+        ndf: 16
+
+    # 3. Base Loss (LABNetLoss)
+    loss:
+      class_path: src.modules.losses.LABNetLoss
+      init_args:
+        n_fft: 512
+        hop_length: 256
+        win_length: 512
+        compress_factor: 0.3
+        lambda_mag: 0.9
+        lambda_comp: 0.1
+
+    # 4. Optimization Settings
+    optimizer_config:
+      lr: 5e-4
+      d_lr: 1e-4 # Discriminator learning rate
+      weight_decay: 1e-2
+    scheduler_config:
+      warmup_epochs: 5
+      min_lr: 1e-6
+
+trainer:
+  default_root_dir: "results"
+  max_epochs: 100
+  accelerator: "gpu"
+  devices: "auto"
+  strategy: "ddp_find_unused_parameters_true"
+  precision: "16-mixed"
+  gradient_clip_val: null # Manual optimization에서는 null이어야 함 (코드 내에서 수동 clip 수행)
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 1
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "MetricGAN"
+      run_name: "LABNet-MetricGAN"
+      tracking_uri: "file:./results/mlruns"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_loss"
+        mode: "min"
+        save_top_k: 1
+        filename: "best-metricgan-{epoch:02d}-{val_loss:.2f}"
+    - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
+      init_args:
+        device_index: 0
+    - class_path: src.callbacks.audio_prediction_writer.AudioPredictionWriter
+      init_args:
+        output_dir: "results/predictions"
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"
+        patience: 10
+        mode: "min"
+        verbose: True
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10

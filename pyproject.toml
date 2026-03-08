@@ -25,6 +25,7 @@ dependencies = [
     "torchmetrics[audio]>=1.8.2",
     "mamba-ssm>=2.3.0",
     "causal-conv1d>=1.6.0",
+    "cvxpy>=1.7.5",
 ]
 
 [project.optional-dependencies]

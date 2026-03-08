@@ -8,3 +8,4 @@ from .ic_mamba2_ft import ICMamba2FT
 from .spatial_net import SpatialNet
 from .spatial_net_fsq_split import SpatialNetFSQSplit
 from .labnet import LABNet
+from .beamformer_mamba_se import BeamformerMambaSE
