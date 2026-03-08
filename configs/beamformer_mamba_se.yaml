@@ -1,0 +1,91 @@
+# lightning.pytorch==2.0.0
+# BeamformerMambaSE: LCMV Beamforming + oSpatialNet-Mamba Speech Enhancement
+# Architecture: Interleaved CrossBandBlock + NarrowBandBlock(Mamba×2)
+# Requires: mamba-ssm, causal-conv1d (CUDA wheel install)
+seed_everything: 42
+
+data:
+  class_path: src.data.SEDataModule
+  init_args:
+    db_path: "data/metadata.db"
+    batch_size: 1
+    num_workers: 8
+    target_sr: 16000
+
+model:
+  class_path: src.modules.se_module.SEModule
+  init_args:
+    target_type: "aligned_dry"
+    sample_rate: 16000
+    num_val_samples_to_log: 4
+
+    model:
+      class_path: src.models.BeamformerMambaSE
+      init_args:
+        in_channels: 5        # 4 air-conduction + 1 BCM
+        n_air: 4              # mics fed to LCMV beamformer
+        hidden_dim: 96        # H (oSpatialNet-small: 96)
+        n_blocks: 8           # L (oSpatialNet-small: 8)
+        C_pp: 8               # FullBandLinear bottleneck dim
+        n_fft: 512
+        hop_length: 256
+        win_length: 512
+        d_state: 64           # Mamba2 SSM state dim
+        d_conv: 4             # Mamba2 local conv width
+        expand: 2             # Mamba2 expand ratio
+        headdim: 64           # Mamba2 SSD head dim  (H*expand) % headdim == 0
+        sample_rate: 16000
+        beam_weights_path: "data/beam_weights_lcmv.pt"
+        beam_method: "lcmv"
+
+    loss:
+      class_path: src.modules.losses.CompositeLoss
+      init_args:
+        alpha: 0.1            # STFT loss weight (1-alpha = SI-SDR weight)
+
+    optimizer_config:
+      lr: 1e-3
+      weight_decay: 1e-3      # oSpatialNet-Mamba: AdamW w/ wd=0.001
+    scheduler_config:
+      warmup_epochs: 5
+      min_lr: 1e-6
+
+trainer:
+  default_root_dir: "results"
+  max_epochs: 100
+  accelerator: "gpu"
+  devices: "auto"
+  strategy: "ddp"             # Mamba2: must use ddp (not ddp_find_unused_parameters_true)
+  precision: "16-mixed"
+  gradient_clip_val: 1.0      # oSpatialNet paper: gradient norm threshold 1
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 1
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "Architecture"
+      run_name: "BeamformerMamba-oSpatialNet-8blk-H96"
+      tracking_uri: "file:./results/mlruns"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "val_loss"
+        mode: "min"
+        save_top_k: 1
+        filename: "best-beamformer-mamba-ospatial-{epoch:02d}-{val_loss:.2f}"
+    - class_path: src.callbacks.gpu_stats_monitor.GPUStatsMonitor
+      init_args:
+        device_index: 0
+    - class_path: src.callbacks.audio_prediction_writer.AudioPredictionWriter
+      init_args:
+        output_dir: "results/predictions"
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_loss"
+        patience: 10
+        mode: "min"
+        verbose: True
+    - class_path: src.callbacks.mlflow_auto_tag.MLflowAutoTagCallback
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10
